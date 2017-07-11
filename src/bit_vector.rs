@@ -51,15 +51,14 @@
 //!
 
 #![cfg_attr(feature = "unstable", feature(test))]
-use std::ops::*;
 use std::fmt;
-use std::iter::FromIterator;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Bitvector
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BitVector {
     bits: usize,
-    vector: Vec<u64>,
+    vector: Vec<AtomicUsize>,
 }
 
 impl fmt::Display for BitVector {
@@ -78,12 +77,22 @@ impl PartialEq for BitVector {
     }
 }
 
+fn to_au(v: usize) -> AtomicUsize {
+    AtomicUsize::new(v)
+}
+
 impl BitVector {
     /// Build a new empty bitvector
     pub fn new(bits: usize) -> Self {
+        let n = u64s(bits);
+        let mut v = Vec::new();
+        for _ in 0 .. n {
+            v.push(to_au(0));
+        }
+
         BitVector {
             bits: bits,
-            vector: vec![0; u64s(bits)],
+            vector: v,
         }
     }
 
@@ -93,8 +102,12 @@ impl BitVector {
     /// have any extra 1 bits.
     pub fn ones(bits: usize) -> Self {
         let (word, offset) = word_offset(bits);
-        let mut bvec = vec![u64::max_value(); word];
-        bvec.push(u64::max_value() >> (64 - offset));
+        let mut bvec = Vec::new();
+        for _ in 0 .. word {
+            bvec.push(to_au(usize::max_value()));
+        }
+
+        bvec.push(to_au(usize::max_value() >> (64 - offset)));
         BitVector {
             bits: bits,
             vector: bvec,
@@ -108,27 +121,29 @@ impl BitVector {
     ///
     /// This method is averagely faster than `self.len() > 0`.
     pub fn is_empty(&self) -> bool {
-        self.vector.iter().all(|&x| x == 0)
+        self.vector.iter().all(|x| x.load(Ordering::Relaxed) == 0)
     }
 
     /// the number of elements in set
     pub fn len(&self) -> usize {
-        self.vector.iter().fold(0usize, |x0, x| x0 + x.count_ones() as usize)
+        self.vector.iter().fold(0usize, |x0, x| x0 + x.load(Ordering::Relaxed).count_ones() as usize)
     }
 
+    /*
     /// Clear all elements from a bitvector
     pub fn clear(&mut self) {
         for p in &mut self.vector {
             *p = 0;
         }
     }
+    */
 
     /// If `bit` belongs to set, return `true`, else return `false`.
     ///
     /// Insert, remove and contains do not do bound check.
     pub fn contains(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
-        (self.vector[word] & mask) != 0
+        (self.get_word(word) as usize & mask) != 0
     }
 
     /// compare if the following is true:
@@ -165,8 +180,8 @@ impl BitVector {
         //
         // self.vector.as_slice()[0 .. word] == other.vector.as_slice[0 .. word]
         //
-        self.vector.iter().zip(other.vector.iter()).take(word).all(|(s1, s2)| s1 == s2) &&
-        (self.vector[word] << (63 - offset)) == (other.vector[word] << (63 - offset))
+        self.vector.iter().zip(other.vector.iter()).take(word).all(|(s1, s2)| s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed)) &&
+        (self.get_word(word) << (63 - offset)) == (other.get_word(word) << (63 - offset))
     }
 
     /// insert a new element to set
@@ -178,10 +193,9 @@ impl BitVector {
     pub fn insert(&mut self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.vector[word];
-        let value = *data;
-        let new_value = value | mask;
-        *data = new_value;
-        new_value != value
+
+        let prev = data.fetch_or(mask, Ordering::Relaxed);
+        prev & mask == 0
     }
 
     /// remove an element from set
@@ -193,11 +207,11 @@ impl BitVector {
     pub fn remove(&mut self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.vector[word];
-        let value = *data;
-        let new_value = value & !mask;
-        *data = new_value;
-        new_value != value
+
+        let prev = data.fetch_and(!mask, Ordering::Relaxed);
+        prev & mask != 0
     }
+
 
     /// import elements from another bitvector
     ///
@@ -207,9 +221,10 @@ impl BitVector {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
         for (i, j) in self.vector.iter_mut().zip(&all.vector) {
-            let value = *i;
-            *i = value | *j;
-            if value != *i {
+
+            let prev = i.fetch_or(j.load(Ordering::Relaxed), Ordering::Relaxed);
+
+            if prev != i.load(Ordering::Relaxed) {
                 changed = true;
             }
         }
@@ -222,139 +237,13 @@ impl BitVector {
     }
 
     pub fn get_word(&self, word: usize) -> u64 {
-        self.vector[word]
-    }
-
-    pub fn set_word(&mut self, word: usize, value: u64) {
-        self.vector[word] = value;
+        self.vector[word].load(Ordering::Relaxed) as u64
     }
 
     pub fn num_words(&self) -> usize {
         self.vector.len()
     }
 
-    /// set union
-    pub fn union(&self, other: &BitVector) -> BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        BitVector {
-            bits: self.capacity(),
-            vector: self.vector
-                        .iter()
-                        .zip(other.vector.iter())
-                        .map(|(x1, x2)| {
-                            if *x1 == u64::max_value() {
-                                u64::max_value()
-                            } else {
-                                x1 | x2
-                            }
-                        })
-                        .collect(),
-        }
-    }
-
-    /// set intersection
-    pub fn intersection(&self, other: &BitVector) -> BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        BitVector {
-            bits: self.capacity(),
-            vector: self.vector
-                        .iter()
-                        .zip(other.vector.iter())
-                        .map(|(x1, x2)| {
-                            if *x1 == 0 {
-                                0
-                            } else {
-                                x1 & x2
-                            }
-                        })
-                        .collect(),
-        }
-    }
-
-    /// set difference
-    pub fn difference(&self, other: &BitVector) -> BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        BitVector {
-            bits: self.capacity(),
-            vector: self.vector
-                        .iter()
-                        .zip(other.vector.iter())
-                        .map(|(x1, x2)| {
-                            if *x1 == 0 {
-                                0
-                            } else {
-                                (x1 ^ x2) & x1
-                            }
-                        })
-                        .collect(),
-        }
-    }
-
-    pub fn difference_d(&self, other: &BitVector) -> BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        BitVector {
-            bits: self.capacity(),
-            vector: self.vector
-                        .iter()
-                        .zip(other.vector.iter())
-                        .map(|(x1, x2)| x1 ^ x2)
-                        .collect(),
-        }
-    }
-
-    /// Union operator by modifying `self`
-    ///
-    /// No extra memory allocation
-    pub fn union_inplace(&mut self, other: &BitVector) -> &mut BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        for (v, v2) in self.vector.iter_mut().zip(other.vector.iter()) {
-            if *v != u64::max_value() {
-                *v |= *v2;
-            }
-        }
-        self
-    }
-
-    /// Intersection operator by modifying `self`
-    ///
-    /// No extra memory allocation
-    pub fn intersection_inplace(&mut self, other: &BitVector) -> &mut BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        for (v, v2) in self.vector.iter_mut().zip(other.vector.iter()) {
-            if *v != 0 {
-                *v &= *v2;
-            }
-        }
-        self
-    }
-
-    /// Difference operator by modifying `self`
-    ///
-    /// No extra memory allocation
-    pub fn difference_inplace(&mut self, other: &BitVector) -> &mut BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        for (v, v2) in self.vector.iter_mut().zip(other.vector.iter()) {
-            if *v != 0 {
-                *v &= *v ^ *v2
-            }
-        }
-        self
-    }
-
-    pub fn difference_d_inplace(&mut self, other: &BitVector) -> &mut BitVector {
-        assert_eq!(self.capacity(), other.capacity());
-        for (v, v2) in self.vector.iter_mut().zip(other.vector.iter()) {
-            *v ^= *v2;
-        }
-        self
-    }
-
-    fn grow(&mut self, num_bits: usize) {
-        let num_words = u64s(num_bits);
-        if self.vector.len() < num_words {
-            self.vector.resize(num_words, 0)
-        }
-    }
 
     /// Return a iterator of element based on current bitvector,
     /// for example:
@@ -384,8 +273,8 @@ impl BitVector {
 
 /// Iterator for BitVector
 pub struct BitVectorIter<'a> {
-    iter: ::std::slice::Iter<'a, u64>,
-    current: u64,
+    iter: ::std::slice::Iter<'a, AtomicUsize>,
+    current: usize,
     idx: usize,
     size: usize,
 }
@@ -397,7 +286,8 @@ impl<'a> Iterator for BitVectorIter<'a> {
             return None;
         }
         while self.current == 0 {
-            self.current = if let Some(&i) = self.iter.next() {
+            self.current = if let Some(_i) = self.iter.next() {
+                let i = _i.load(Ordering::Relaxed);
                 if i == 0 {
                     self.idx += 64;
                     continue;
@@ -417,110 +307,7 @@ impl<'a> Iterator for BitVectorIter<'a> {
     }
 }
 
-impl FromIterator<bool> for BitVector {
-    fn from_iter<I>(iter: I) -> BitVector
-        where I: IntoIterator<Item = bool>
-    {
-        let iter = iter.into_iter();
-        let (len, _) = iter.size_hint();
-        // Make the minimum length for the bitvector 64 bits since that's
-        // the smallest non-zero size anyway.
-        let len = if len < 64 {
-            64
-        } else {
-            len
-        };
-        let mut bv = BitVector::new(len);
-        for (idx, val) in iter.enumerate() {
-            if idx > len {
-                bv.grow(idx);
-            }
-            if val {
-                bv.insert(idx);
-            }
-        }
 
-        bv
-    }
-}
-
-impl<'a> BitAnd for &'a BitVector {
-    type Output = BitVector;
-    fn bitand(self, rhs: Self) -> BitVector {
-        self.intersection(rhs)
-    }
-}
-
-impl<'a> BitAndAssign for &'a mut BitVector {
-    fn bitand_assign(&mut self, rhs: Self) {
-        self.intersection_inplace(rhs);
-    }
-}
-
-impl<'a> BitOr for &'a BitVector {
-    type Output = BitVector;
-    fn bitor(self, rhs: Self) -> BitVector {
-        self.union(rhs)
-    }
-}
-
-impl<'a> BitOrAssign for &'a mut BitVector {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.union_inplace(rhs);
-    }
-}
-
-impl<'a> BitXor for &'a BitVector {
-    type Output = BitVector;
-    fn bitxor(self, rhs: Self) -> BitVector {
-        self.difference(rhs)
-    }
-}
-
-impl<'a> BitXorAssign for &'a mut BitVector {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        self.difference_inplace(rhs);
-    }
-}
-
-impl BitAnd for BitVector {
-    type Output = BitVector;
-    fn bitand(self, rhs: Self) -> BitVector {
-        self.intersection(&rhs)
-    }
-}
-
-impl BitAndAssign for BitVector {
-    fn bitand_assign(&mut self, rhs: Self) {
-        self.intersection_inplace(&rhs);
-    }
-}
-
-impl BitOr for BitVector {
-    type Output = BitVector;
-    fn bitor(self, rhs: Self) -> BitVector {
-        self.union(&rhs)
-    }
-}
-
-impl BitOrAssign for BitVector {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.union_inplace(&rhs);
-    }
-}
-
-impl BitXor for BitVector {
-    type Output = BitVector;
-    fn bitxor(self, rhs: Self) -> BitVector {
-        self.difference(&rhs)
-    }
-}
-
-impl BitXorAssign for BitVector {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        self.difference_inplace(&rhs);
-    }
-}
 
 fn u64s(elements: usize) -> usize {
     (elements + 63) / 64
@@ -530,7 +317,7 @@ fn word_offset(index: usize) -> (usize, usize) {
     (index / 64, index % 64)
 }
 
-fn word_mask(index: usize) -> (usize, u64) {
+fn word_mask(index: usize) -> (usize, usize) {
     let word = index / 64;
     let mask = 1 << (index % 64);
     (word, mask)
@@ -554,162 +341,6 @@ mod tests {
         assert!(vec1.contains(5));
         assert!(!vec1.contains(63));
         assert!(vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_union() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.union(&vec2);
-
-        assert!(vec1.contains(3));
-        assert!(!vec1.contains(4));
-        assert!(vec1.contains(5));
-        assert!(!vec1.contains(63));
-        assert!(vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_intersection() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec1.insert(5));
-        assert!(vec2.insert(5));
-        assert!(!vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.intersection(&vec2);
-
-        assert!(!vec1.contains(3));
-        assert!(!vec1.contains(4));
-        assert!(vec1.contains(5));
-        assert!(!vec1.contains(63));
-        assert!(!vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_difference() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec1.insert(5));
-        assert!(vec2.insert(5));
-        assert!(!vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.difference(&vec2);
-
-        assert!(vec1.contains(3));
-        assert!(!vec1.contains(4));
-        assert!(!vec1.contains(5));
-        assert!(!vec1.contains(63));
-        assert!(!vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_union_inplace() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec2.insert(5));
-        assert!(vec2.insert(6));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.union_inplace(&vec2);
-
-        assert!(vec1.contains(3));
-        assert!(vec1.contains(6));
-        assert!(!vec1.contains(4));
-        assert!(vec1.contains(5));
-        assert!(!vec1.contains(63));
-        assert!(vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_intersection_inplace() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec1.insert(5));
-        assert!(vec2.insert(5));
-        assert!(vec2.insert(6));
-        assert!(!vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.intersection_inplace(&vec2);
-
-        assert!(!vec1.contains(3));
-        assert!(!vec1.contains(4));
-        assert!(vec1.contains(5));
-        assert!(!vec1.contains(6));
-        assert!(!vec1.contains(63));
-        assert!(!vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_difference_inplace() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec1.insert(5));
-        assert!(vec2.insert(5));
-        assert!(vec2.insert(6));
-        assert!(!vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let vec1 = vec1.difference_inplace(&vec2);
-
-        assert!(vec1.contains(3));
-        assert!(!vec1.contains(6));
-        assert!(!vec1.contains(4));
-        assert!(!vec1.contains(5));
-        assert!(!vec1.contains(63));
-        assert!(!vec1.contains(64));
-    }
-
-    #[test]
-    fn bitvector_operator_overload() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
-        assert!(vec1.insert(3));
-        assert!(!vec1.insert(3));
-        assert!(vec1.insert(5));
-        assert!(vec2.insert(5));
-        assert!(!vec2.insert(5));
-        assert!(vec2.insert(64));
-
-        let inter = &vec1 & &vec2;
-        let union = &vec1 | &vec2;
-        let diff = &vec1 ^ &vec2;
-
-        assert!(union.contains(3));
-        assert!(!union.contains(4));
-        assert!(union.contains(5));
-        assert!(!union.contains(63));
-        assert!(union.contains(64));
-
-        assert!(!inter.contains(3));
-        assert!(!inter.contains(4));
-        assert!(inter.contains(5));
-        assert!(!inter.contains(63));
-        assert!(!inter.contains(64));
-
-        assert!(diff.contains(3));
-        assert!(!diff.contains(4));
-        assert!(!diff.contains(5));
-        assert!(!diff.contains(63));
-        assert!(!diff.contains(64));
     }
 
     #[test]
@@ -794,32 +425,6 @@ mod tests {
         assert!(!bitvec.contains(3));
         assert_eq!(bitvec.iter().collect::<Vec<_>>(),
                    vec![0, 1, 5, 11, 12, 19, 23]);
-    }
-
-    #[test]
-    fn grow() {
-        let mut vec1 = BitVector::new(65);
-        for index in 0..65 {
-            assert!(vec1.insert(index));
-            assert!(!vec1.insert(index));
-        }
-        vec1.grow(128);
-
-        // Check if the bits set before growing are still set
-        for index in 0..65 {
-            assert!(vec1.contains(index));
-        }
-
-        // Check if the new bits are all un-set
-        for index in 65..128 {
-            assert!(!vec1.contains(index));
-        }
-
-        // Check that we can set all new bits without running out of bounds
-        for index in 65..128 {
-            assert!(vec1.insert(index));
-            assert!(!vec1.insert(index));
-        }
     }
 
     #[test]

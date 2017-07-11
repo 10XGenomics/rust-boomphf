@@ -43,7 +43,7 @@ impl<T: Hash + Clone> Mphf<T> {
 
 		while keys.len() > 0 {
 
-			let size = std::cmp::max(256, (gamma * keys.len() as f64) as u64);
+			let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
 			let mut a = BitVector::new(size as usize);
 			let mut collide = BitVector::new(size as usize);
 
@@ -53,12 +53,12 @@ impl<T: Hash + Clone> Mphf<T> {
 				let idx = hash(seed, v) % size;
 
 				if collide.contains(idx as usize) {
-					()
-				} else if a.contains(idx as usize) {
+					continue;
+				}
+
+				let a_was_set = !a.insert(idx as usize);
+				if a_was_set {
 					collide.insert(idx as usize);
-					a.remove(idx as usize);
-				} else {
-					a.insert(idx as usize);
 				}
 			}
 
@@ -68,6 +68,7 @@ impl<T: Hash + Clone> Mphf<T> {
 
 				if collide.contains(idx as usize) {
 					redo_keys.push(v.clone());
+					a.remove(idx as usize);
 				}
 			}
 
