@@ -1,0 +1,10 @@
+[package]
+name = "boomphf"
+version = "0.1.0"
+authors = ["Patrick Marks <patrick@10xgenomics.com>"]
+
+[dependencies]
+fxhash = "*"
+
+[dev-dependencies]
+quickcheck = "0.3"
