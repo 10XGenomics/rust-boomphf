@@ -1,44 +1,19 @@
+// Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+//
+// Note this code was copied from https://github.com/zhaihj/bitvector (MIT licensed),
+// and modified to add rank/select operations, and to use atomic primitives to allow 
+// multi-threaded access. The original copyright license text is here:
+// 
+// The MIT License (MIT)
+//
+// Copyright (c) 2016 Hongjie Zhai
+
+
 //! ### BitVector Module
-//!
+//! 
 //! BitVector uses one bit to represent a bool state.
 //! BitVector is useful for the programs that need fast set operation (intersection, union,
 //! difference), because that all these operations can be done with simple bitand, bitor, bitxor.
-//!
-//! Usually, the length of a BitVector should not be changed after constructed, for example:
-//!
-//! ```
-//! extern crate bitvector;
-//! use bitvector::*;
-//!
-//! fn main(){
-//!   // a bitvector contains 30 elements
-//!   let mut bitvec = BitVector::new(30);
-//!   // add 10 elements
-//!   for i in 0 .. 10 { bitvec.insert(i); }
-//!   // you can use Iterator to iter over all the elements
-//!   assert_eq!(bitvec.iter().collect::<Vec<_>>(), vec![0,1,2,3,4,5,6,7,8,9]);
-//!
-//!   let mut bitvec2 = BitVector::new(30);
-//!   for i in 5 .. 15 { bitvec2.insert(i); }
-//!
-//!   // set union
-//!   assert_eq!(bitvec.union(&bitvec2).iter().collect::<Vec<_>>(),
-//!              vec![0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]);
-//!
-//!   // set intersection
-//!   assert_eq!(bitvec.intersection(&bitvec2).iter().collect::<Vec<_>>(),
-//!              vec![5,6,7,8,9]);
-//!
-//!   // set difference
-//!   assert_eq!(bitvec.difference(&bitvec2).iter().collect::<Vec<_>>(),
-//!              vec![0,1,2,3,4]);
-//!
-//!   // you can also use `&`(intersection) `|`(union) and `^`(difference)
-//!   // to do the set operations
-//!   assert_eq!((&bitvec ^ &bitvec2).iter().collect::<Vec<_>>(),
-//!              vec![0,1,2,3,4]);
-//! }
-//! ```
 //!
 //! ### Implementation Details
 //!
@@ -141,6 +116,7 @@ impl BitVector {
     /// If `bit` belongs to set, return `true`, else return `false`.
     ///
     /// Insert, remove and contains do not do bound check.
+    #[inline]
     pub fn contains(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         (self.get_word(word) as usize & mask) != 0
@@ -149,26 +125,6 @@ impl BitVector {
     /// compare if the following is true:
     ///
     /// self \cap {0, 1, ... , bit - 1} == other \cap {0, 1, ... ,bit - 1}
-    ///
-    /// for example:
-    ///
-    /// ```
-    /// use bitvector::*;
-    ///
-    /// let mut A = BitVector::new(11);
-    /// let mut B = BitVector::new(11);
-    /// for i in vec![0, 1, 3 ,5 ,7, 10] { A.insert(i); }
-    /// for i in vec![0, 1, 3, 4, 5, 7, 10] { B.insert(i); }
-    ///
-    ///
-    /// assert!(A.eq_left(&B, 1));  // [0             ]  = [0              ]
-    /// assert!(A.eq_left(&B, 2));  // [0, 1          ]  = [0, 1           ]
-    /// assert!(A.eq_left(&B, 3));  // [0, 1          ]  = [0, 1           ]
-    /// assert!(A.eq_left(&B, 4));  // [0, 1,   3     ]  = [0, 1,   3      ]
-    /// assert!(!A.eq_left(&B, 5)); // [0, 1,   3     ] != [0, 1,   3, 4   ]
-    /// assert!(!A.eq_left(&B, 6)); // [0, 1,   3,   5] != [0, 1,   3, 4, 5]
-    /// ```
-    ///
     pub fn eq_left(&self, other: &BitVector, bit: usize) -> bool {
         if bit == 0 {
             return true;
@@ -190,6 +146,7 @@ impl BitVector {
     /// if value already exists in set, return false.
     ///
     /// Insert, remove and contains do not do bound check.
+    #[inline]
     pub fn insert(&mut self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.vector[word];
@@ -245,22 +202,7 @@ impl BitVector {
     }
 
 
-    /// Return a iterator of element based on current bitvector,
-    /// for example:
-    ///
-    /// ```
-    /// extern crate bitvector;
-    /// use bitvector::*;
-    ///
-    /// fn main() {
-    ///     let mut bitvec = BitVector::new(5);
-    ///     bitvec.insert(2);
-    ///     bitvec.insert(3);
-    ///     // The bitvector becomes: 0x00 0x00 0x00 0x0C
-    ///     assert_eq!(bitvec.iter().collect::<Vec<_>>(), vec![2,3]);
-    ///     // collected vector will contains the real element not the bit.
-    /// }
-    /// ```
+    /// Return a iterator of the set element in the bitvector,
     pub fn iter<'a>(&'a self) -> BitVectorIter<'a> {
         BitVectorIter {
             iter: self.vector.iter(),

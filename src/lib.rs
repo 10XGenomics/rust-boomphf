@@ -1,56 +1,84 @@
-extern crate fxhash;
+// Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
 
-mod bit_vector;
-use bit_vector::*;
+//! ### boomphf - Fast and scalable minimal perfect hashing for massive key sets
+//! A Rust implementation of "Fast and scalable minimal perfect hashing for massive key sets"
+//! [https://arxiv.org/abs/1702.03154](https://arxiv.org/abs/1702.03154). The library generates
+//! a minimal perfect hash function (MPHF) for a collection of hashable objects. Note: minimal
+//! perfect hash functions can only be used with the set of objects used when hash function
+//! was created. Hashing a new object will return an arbitrary hash value. If your use case
+//! may result in hashing new values, you will need an auxiliary scheme to detect this condition.
+//!
+//! ```
+//! use boomphf::*;
+//! // Generate MPHF
+//! let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
+//! let n = possible_objects.len();
+//! let phf = Mphf::new(1.7, possible_objects.clone());
+//! // Get hash value of all objects	
+//! let mut hashes = Vec::new();
+//! for v in possible_objects {
+//!		hashes.push(phf.hash(&v));
+//!	}
+//!	hashes.sort();
+//!
+//! // Expected hash output is set of all integers from 0..n
+//! let expected_hashes: Vec<u64> = (0 .. n as u64).collect();
+//!	assert!(hashes == expected_hashes)
+//! ```
+
+extern crate fnv;
+
+mod bitvector;
+use bitvector::*;
 
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
+use std::fmt::Debug;
 
-// Fast and scalable minimal perfect hashing for massive key sets
-// https://arxiv.org/abs/1702.03154
-
-
-pub const SEEDS: [u64; 10] = [0,1,2,3,4,5,6,7,8,9];
-
-pub struct Mphf<T: Hash + Clone> {
+/// A minimal perfect hash function over a set of objects of type `T`.
+pub struct Mphf<T: Hash + Clone + Debug> {
 	bitvecs: Vec<BitVector>,
 	ranks: Vec<Vec<u64>>,
 	phantom: PhantomData<T>
 }
 
 
-pub fn hash<T: Hash>(mut x: u64, v: &T) -> u64 {
-    let mut state = fxhash::FxHasher::default();
-
-	x = x ^ (x >> 12); // a
-	x = x ^ (x << 25); // b
-	x = x ^ (x >> 27); // c
-	x = x.wrapping_mul(2685821657736338717);
-
-	state.write_u64(x);
+fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+	let mut state = fnv::FnvHasher::with_key(iter);
     v.hash(&mut state);
     state.finish()
 }
 
-impl<T: Hash + Clone> Mphf<T> {
-	pub fn new(gamma: f64, start_keys: Vec<T>) -> Mphf<T> {
+impl<T: Hash + Clone + Debug> Mphf<T> {
+	/// Generate a minimal perfect hash function for the set of `objects`.
+	/// `objects` must not contain any duplicate items.
+	/// `gamma` controls the tradeoff between the construction-time and run-time speed,
+	/// and the size of the datastructure representing the hash function. See the paper for details.
+	pub fn new(gamma: f64, objects: Vec<T>) -> Mphf<T> {
 		// FIXME - don't require owned Vec
 		// be more memory efficient.
 		let mut bitvecs = Vec::new();
-		let mut keys = start_keys;
+		let mut keys = objects;
 		let mut iter = 0;
 
+		assert!(gamma > 1.01);
+
 		while keys.len() > 0 {
+
+			if iter > 16 {
+				println!("ran out of key space. items: {:?}", keys);
+				panic!("counldn't find unique hashes");
+			}
 
 			let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
 			let mut a = BitVector::new(size as usize);
 			let mut collide = BitVector::new(size as usize);
 
-			let seed = SEEDS[iter];
+			let seed = iter;
 
 			for v in keys.iter() {
-				let idx = hash(seed, v) % size;
+				let idx = hash_with_seed(seed, v) % size;
 
 				if collide.contains(idx as usize) {
 					continue;
@@ -64,7 +92,7 @@ impl<T: Hash + Clone> Mphf<T> {
 
 			let mut redo_keys = Vec::new();
 			for v in keys.iter() {
-				let idx = hash(seed, v) % size;
+				let idx = hash_with_seed(seed, v) % size;
 
 				if collide.contains(idx as usize) {
 					redo_keys.push(v.clone());
@@ -126,11 +154,14 @@ impl<T: Hash + Clone> Mphf<T> {
 		rank
 	}
 
-
-	pub fn query(&self, v: &T) -> u64 {
+	/// Compute the hash value of `item`. This method should only be used
+	/// with items known to be in construction set. Use `try_hash` you cannot 
+	/// guarantee that `item` was in the construction set. If `item` was not present
+	/// in the construction set this function may panic.
+	pub fn hash(&self, item: &T) -> u64 {
 
 		for (iter, bv) in self.bitvecs.iter().enumerate() {
-			let hash = hash(SEEDS[iter], v) % (bv.capacity() as u64);
+			let hash = hash_with_seed(iter as u64, item) % (bv.capacity() as u64);
 
 			if bv.contains(hash as usize) {
 				return self.get_rank(hash, iter);
@@ -138,6 +169,22 @@ impl<T: Hash + Clone> Mphf<T> {
 		}
 
 		unreachable!("must find a hash value");
+	}
+
+	/// Compute the hash value of `item`. If `item` was not present
+	/// in the set of objects used to construct the hash function, the return
+	/// value will an arbitrary value Some(x), or None.
+	pub fn try_hash(&self, item: &T) -> Option<u64> {
+
+		for (iter, bv) in self.bitvecs.iter().enumerate() {
+			let hash = hash_with_seed(iter as u64, item) % (bv.capacity() as u64);
+
+			if bv.contains(hash as usize) {
+				return Some(self.get_rank(hash, iter))
+			}
+		}
+
+		None
 	}
 }
 
@@ -148,21 +195,23 @@ extern crate quickcheck;
 
 #[cfg(test)]
 mod tests {
+
 	use super::*;
 	use std::collections::HashSet;
+	use std::iter::FromIterator;
 
-	fn check_mphf<T>(xs: HashSet<T>) -> bool where T: Hash + PartialEq + Eq + Clone {
+	fn check_mphf<T>(xs: HashSet<T>) -> bool where T: Hash + PartialEq + Eq + Clone + Debug {
 
 		let mut xsv: Vec<T> = Vec::new();
 		xsv.extend(xs);
 		let n = xsv.len();
 
-		let phf = Mphf::new(1.5, xsv.clone());
+		let phf = Mphf::new(1.7, xsv.clone());
 
 		let mut hashes = Vec::new();
 
 		for v in xsv {
-			hashes.push(phf.query(&v));
+			hashes.push(phf.hash(&v));
 		}
 
 		hashes.sort();
@@ -199,5 +248,12 @@ mod tests {
 		fn check_string(v: HashSet<Vec<String>>) -> bool {
 			check_mphf(v)
 		}
+	}
+
+
+	#[test]
+	fn from_ints() {
+		let items = (0..1000000).map(|x| x*2);
+		check_mphf(HashSet::from_iter(items));
 	}
 }
