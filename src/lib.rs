@@ -13,8 +13,8 @@
 //! // Generate MPHF
 //! let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
 //! let n = possible_objects.len();
-//! let phf = Mphf::new(1.7, possible_objects.clone());
-//! // Get hash value of all objects	
+//! let phf = Mphf::new(1.7, possible_objects.clone(), None);
+//! // Get hash value of all objects
 //! let mut hashes = Vec::new();
 //! for v in possible_objects {
 //!		hashes.push(phf.hash(&v));
@@ -53,9 +53,11 @@ fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
 impl<T: Hash + Clone + Debug> Mphf<T> {
 	/// Generate a minimal perfect hash function for the set of `objects`.
 	/// `objects` must not contain any duplicate items.
-	/// `gamma` controls the tradeoff between the construction-time and run-time speed,
-	/// and the size of the datastructure representing the hash function. See the paper for details.
-	pub fn new(gamma: f64, objects: Vec<T>) -> Mphf<T> {
+        /// `gamma` controls the tradeoff between the construction-time and run-time speed,
+        /// and the size of the datastructure representing the hash function. See the paper for details.
+        /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
+
+	pub fn new(gamma: f64, objects: Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
 		// FIXME - don't require owned Vec
 		// be more memory efficient.
 		let mut bitvecs = Vec::new();
@@ -65,8 +67,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		assert!(gamma > 1.01);
 
 		while keys.len() > 0 {
-
-			if iter > 16 {
+			if max_iters.is_some() && iter > max_iters.unwrap() {
 				println!("ran out of key space. items: {:?}", keys);
 				panic!("counldn't find unique hashes");
 			}
@@ -128,7 +129,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 			ranks.push(rank)
 		}
 
-		ranks 
+		ranks
 	}
 
 	#[inline]
@@ -155,7 +156,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 	}
 
 	/// Compute the hash value of `item`. This method should only be used
-	/// with items known to be in construction set. Use `try_hash` you cannot 
+	/// with items known to be in construction set. Use `try_hash` you cannot
 	/// guarantee that `item` was in the construction set. If `item` was not present
 	/// in the construction set this function may panic.
 	pub fn hash(&self, item: &T) -> u64 {
@@ -206,7 +207,7 @@ mod tests {
 		xsv.extend(xs);
 		let n = xsv.len();
 
-		let phf = Mphf::new(1.7, xsv.clone());
+		let phf = Mphf::new(1.7, xsv.clone(), None);
 
 		let mut hashes = Vec::new();
 
