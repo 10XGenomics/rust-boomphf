@@ -5,10 +5,12 @@ authors = ["Patrick Marks <patrick@10xgenomics.com>"]
 
 [dependencies]
 fnv = "*"
+serde = { version=">=1.0", optional = true, features=["derive"] }
 
 [dev-dependencies]
 quickcheck = "0.3"
 bencher = "*"
+
 
 [[bench]]
 name = "example"

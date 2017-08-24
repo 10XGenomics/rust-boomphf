@@ -28,6 +28,10 @@
 
 extern crate fnv;
 
+#[cfg(feature = "serde")]
+#[macro_use]
+extern crate serde;
+
 mod bitvector;
 use bitvector::*;
 
@@ -37,6 +41,7 @@ use std::marker::PhantomData;
 use std::fmt::Debug;
 
 /// A minimal perfect hash function over a set of objects of type `T`.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T: Hash + Clone + Debug> {
 	bitvecs: Vec<BitVector>,
 	ranks: Vec<Vec<u64>>,
