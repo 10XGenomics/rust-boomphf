@@ -2,9 +2,9 @@
 
 An implementation of "Fast and scalable minimal perfect hashing for massive key sets"
 [https://arxiv.org/abs/1702.03154](https://arxiv.org/abs/1702.03154).
-The library generates a minimal perfect hash function (MPHF) for a collection of hashable objects. 
-Note, minimal perfect hash functions only return a usable hash value for objects in the set used to create the MPHF. 
-Hashing a new object will return an arbitrary hash value. If your use case may result in hashing new values, you will need an 
+The library generates a minimal perfect hash function (MPHF) for a collection of hashable objects.
+Note, minimal perfect hash functions only return a usable hash value for objects in the set used to create the MPHF.
+Hashing a new object will return an arbitrary hash value. If your use case may result in hashing new values, you will need an
 auxiliary scheme to detect this condition.
 
  ```
@@ -12,8 +12,8 @@ auxiliary scheme to detect this condition.
  // Generate MPHF
  let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
  let n = possible_objects.len();
- let phf = Mphf::new(1.7, possible_objects.clone());
- // Get hash value of all objects	
+ let phf = Mphf::new(1.7, possible_objects.clone(), None);
+ // Get hash value of all objects
  let mut hashes = Vec::new();
  for v in possible_objects {
      hashes.push(phf.hash(&v));
