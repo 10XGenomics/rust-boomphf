@@ -13,7 +13,7 @@
 //! // Generate MPHF
 //! let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
 //! let n = possible_objects.len();
-//! let phf = Mphf::new(1.7, possible_objects.clone(), None);
+//! let phf = Mphf::new(1.7, &possible_objects, None);
 //! // Get hash value of all objects
 //! let mut hashes = Vec::new();
 //! for v in possible_objects {
@@ -62,52 +62,69 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
         /// and the size of the datastructure representing the hash function. See the paper for details.
         /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
 
-	pub fn new(gamma: f64, objects: Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
-		// FIXME - don't require owned Vec
-		// be more memory efficient.
+	pub fn new(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
+
 		let mut bitvecs = Vec::new();
-		let mut keys = objects;
 		let mut iter = 0;
+		let mut redo_keys = Vec::new();
 
 		assert!(gamma > 1.01);
 
-		while keys.len() > 0 {
-			if max_iters.is_some() && iter > max_iters.unwrap() {
-				println!("ran out of key space. items: {:?}", keys);
-				panic!("counldn't find unique hashes");
-			}
+		loop {
 
-			let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-			let mut a = BitVector::new(size as usize);
-			let mut collide = BitVector::new(size as usize);
+			// this scope structure is needed to allow keys to be
+			// the 'objects' reference on the first loop, and a reference
+			// to 'redo_keys' on subsequent iterations.
+			redo_keys =
+			{
+				let keys =
+					if iter == 0 {
+						objects
+					} else {
+						&redo_keys
+					};
 
-			let seed = iter;
-
-			for v in keys.iter() {
-				let idx = hash_with_seed(seed, v) % size;
-
-				if collide.contains(idx as usize) {
-					continue;
+				if max_iters.is_some() && iter > max_iters.unwrap() {
+					println!("ran out of key space. items: {:?}", keys);
+					panic!("counldn't find unique hashes");
 				}
 
-				let a_was_set = !a.insert(idx as usize);
-				if a_was_set {
-					collide.insert(idx as usize);
+				let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
+				let mut a = BitVector::new(size as usize);
+				let mut collide = BitVector::new(size as usize);
+
+				let seed = iter;
+
+				for v in keys.iter() {
+					let idx = hash_with_seed(seed, v) % size;
+
+					if collide.contains(idx as usize) {
+						continue;
+					}
+
+					let a_was_set = !a.insert(idx as usize);
+					if a_was_set {
+						collide.insert(idx as usize);
+					}
 				}
-			}
 
-			let mut redo_keys = Vec::new();
-			for v in keys.iter() {
-				let idx = hash_with_seed(seed, v) % size;
+				let mut redo_keys_tmp = Vec::new();
+				for v in keys.iter() {
+					let idx = hash_with_seed(seed, v) % size;
 
-				if collide.contains(idx as usize) {
-					redo_keys.push(v.clone());
-					a.remove(idx as usize);
+					if collide.contains(idx as usize) {
+						redo_keys_tmp.push(v.clone());
+						a.remove(idx as usize);
+					}
 				}
-			}
 
-			bitvecs.push(a);
-			keys = redo_keys;
+				bitvecs.push(a);
+				redo_keys_tmp
+			};
+
+			if redo_keys.len() == 0 {
+				break;
+			}
 			iter += 1;
 		}
 
@@ -212,7 +229,7 @@ mod tests {
 		xsv.extend(xs);
 		let n = xsv.len();
 
-		let phf = Mphf::new(1.7, xsv.clone(), None);
+		let phf = Mphf::new(1.7, &xsv, None);
 
 		let mut hashes = Vec::new();
 
