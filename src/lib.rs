@@ -1,7 +1,10 @@
 // Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+// Copyright (c) 2015 Guillaume Rizk
+// Some portions of this code are derived from https://github.com/rizkg/BBHash (MIT license)
 
 //! ### boomphf - Fast and scalable minimal perfect hashing for massive key sets
-//! A Rust implementation of "Fast and scalable minimal perfect hashing for massive key sets"
+//! A Rust implementation of the BBHash method for constructing minimal perfect hash functions,
+//! as described in "Fast and scalable minimal perfect hashing for massive key sets"
 //! [https://arxiv.org/abs/1702.03154](https://arxiv.org/abs/1702.03154). The library generates
 //! a minimal perfect hash function (MPHF) for a collection of hashable objects. Note: minimal
 //! perfect hash functions can only be used with the set of objects used when hash function
