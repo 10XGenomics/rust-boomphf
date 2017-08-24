@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[macro_use] use serde;
 
 /// Bitvector
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitVector {
     bits: usize,
@@ -51,6 +52,7 @@ fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Er
     }
     seq.end()
 }
+
 // Custom deserializer
 #[cfg(feature = "serde")]
 pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Error>
@@ -78,8 +80,6 @@ pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Err
     let x = AtomicUsizeSeqVisitor;
     deserializer.deserialize_seq(x)
 }
-
-
 
 impl fmt::Display for BitVector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
