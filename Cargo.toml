@@ -14,7 +14,7 @@ heapsize = ">=0.4"
 
 [dev-dependencies]
 quickcheck = "0.3"
-bencher = "*"
+bencher = ">=0.1"
 
 
 [[bench]]
