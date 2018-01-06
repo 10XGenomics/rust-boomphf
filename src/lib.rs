@@ -1,4 +1,4 @@
-// Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+// Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 // Copyright (c) 2015 Guillaume Rizk
 // Some portions of this code are derived from https://github.com/rizkg/BBHash (MIT license)
 
@@ -194,7 +194,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 	}
 
 	/// Compute the hash value of `item`. This method should only be used
-	/// with items known to be in construction set. Use `try_hash` you cannot
+	/// with items known to be in construction set. Use `try_hash` if you cannot
 	/// guarantee that `item` was in the construction set. If `item` was not present
 	/// in the construction set this function may panic.
 	pub fn hash(&self, item: &T) -> u64 {
