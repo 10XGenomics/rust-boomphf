@@ -30,10 +30,14 @@
 //! ```
 
 extern crate fnv;
+#[macro_use]
+extern crate heapsize;
 
 #[cfg(feature = "serde")]
 #[macro_use]
 extern crate serde;
+
+use heapsize::HeapSizeOf;
 
 mod bitvector;
 use bitvector::*;
@@ -49,6 +53,12 @@ pub struct Mphf<T: Hash + Clone + Debug> {
 	bitvecs: Vec<BitVector>,
 	ranks: Vec<Vec<u64>>,
 	phantom: PhantomData<T>
+}
+
+impl<T: Hash + Clone + Debug> HeapSizeOf for Mphf<T> {
+    fn heap_size_of_children(&self) -> usize {
+		self.bitvecs.heap_size_of_children() + self.ranks.heap_size_of_children()
+    }
 }
 
 
@@ -67,6 +77,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 
 	pub fn new(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
 
+		let n = objects.len();
 		let mut bitvecs = Vec::new();
 		let mut iter = 0;
 		let mut redo_keys = Vec::new();
@@ -132,7 +143,10 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		}
 
 		let ranks = Self::compute_ranks(&bitvecs);
-		Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData }
+		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
+		let sz = unsafe { heapsize::heap_size_of(&r) };
+		//println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		r
 	}
 
 	fn compute_ranks(bvs: &Vec<BitVector>) -> Vec<Vec<u64>> {
@@ -226,14 +240,17 @@ mod tests {
 	use std::collections::HashSet;
 	use std::iter::FromIterator;
 
+	/// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
 	fn check_mphf<T>(xs: HashSet<T>) -> bool where T: Hash + PartialEq + Eq + Clone + Debug {
 
 		let mut xsv: Vec<T> = Vec::new();
 		xsv.extend(xs);
 		let n = xsv.len();
 
+		// Generate the MPHF
 		let phf = Mphf::new(1.7, &xsv, None);
 
+		// Hash all the elements of xs
 		let mut hashes = Vec::new();
 
 		for v in xsv {
@@ -242,8 +259,15 @@ mod tests {
 
 		hashes.sort();
 
+		// Hashes must equal 0 .. n
 		let gt: Vec<u64> = (0 .. n as u64).collect();
 		hashes == gt
+	}
+
+	quickcheck! {
+		fn check_string(v: HashSet<Vec<String>>) -> bool {
+			check_mphf(v)
+		}
 	}
 
 	quickcheck! {
@@ -270,11 +294,6 @@ mod tests {
 		}
 	}
 
-	quickcheck! {
-		fn check_string(v: HashSet<Vec<String>>) -> bool {
-			check_mphf(v)
-		}
-	}
 
 
 	#[test]
