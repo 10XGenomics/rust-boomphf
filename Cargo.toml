@@ -7,15 +7,12 @@ authors = ["Patrick Marks <patrick@10xgenomics.com>"]
 fnv = "*"
 serde = { version=">=1.0", optional = true, features=["derive"] }
 heapsize = "*"
-heapsize_derive = "*"
-
 
 [dev-dependencies]
 quickcheck = "0.3"
 bencher = "*"
 
 
-
 [[bench]]
-name = "example"
+name = "build"
 harness = false

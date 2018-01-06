@@ -30,7 +30,6 @@
 //! ```
 
 extern crate fnv;
-#[macro_use]
 extern crate heapsize;
 
 #[cfg(feature = "serde")]
@@ -145,7 +144,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		let ranks = Self::compute_ranks(&bitvecs);
 		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
 		let sz = unsafe { heapsize::heap_size_of(&r) };
-		//println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
 

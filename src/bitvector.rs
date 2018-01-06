@@ -29,6 +29,7 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use heapsize::HeapSizeOf;
 
 #[cfg(feature = "serde")]
 #[macro_use] use serde;
@@ -257,6 +258,13 @@ impl BitVector {
         }
     }
 }
+
+impl HeapSizeOf for BitVector {
+    fn heap_size_of_children(&self) -> usize {
+        self.vector.capacity() * 8
+    }
+}
+
 
 /// Iterator for BitVector
 pub struct BitVectorIter<'a> {
