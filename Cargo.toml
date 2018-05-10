@@ -10,7 +10,8 @@ description = "Scalable and Efficient Minimal Perfect Hash Functions"
 [dependencies]
 fnv = ">=1.0"
 serde = { version=">=1.0", optional = true, features=["derive"] }
-heapsize = ">=0.4"
+rayon = ">=1.0"
+heapsize = ">=0.4.2"
 
 [dev-dependencies]
 quickcheck = "0.3"

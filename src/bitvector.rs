@@ -30,6 +30,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use heapsize::HeapSizeOf;
+use std::mem;
 
 #[cfg(feature = "serde")]
 #[macro_use] use serde;
@@ -106,7 +107,7 @@ impl BitVector {
     /// Build a new empty bitvector
     pub fn new(bits: usize) -> Self {
         let n = u64s(bits);
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(n);
         for _ in 0 .. n {
             v.push(to_au(0));
         }
@@ -123,7 +124,7 @@ impl BitVector {
     /// have any extra 1 bits.
     pub fn ones(bits: usize) -> Self {
         let (word, offset) = word_offset(bits);
-        let mut bvec = Vec::new();
+        let mut bvec = Vec::with_capacity(word+1);
         for _ in 0 .. word {
             bvec.push(to_au(usize::max_value()));
         }
@@ -193,9 +194,9 @@ impl BitVector {
     ///
     /// Insert, remove and contains do not do bound check.
     #[inline]
-    pub fn insert(&mut self, bit: usize) -> bool {
+    pub fn insert(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
-        let data = &mut self.vector[word];
+        let data = &self.vector[word];
 
         let prev = data.fetch_or(mask, Ordering::Relaxed);
         prev & mask == 0
@@ -207,9 +208,9 @@ impl BitVector {
     /// if value doesn't exist in set, return false.
     ///
     /// Insert, remove and contains do not do bound check.
-    pub fn remove(&mut self, bit: usize) -> bool {
+    pub fn remove(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
-        let data = &mut self.vector[word];
+        let data = &self.vector[word];
 
         let prev = data.fetch_and(!mask, Ordering::Relaxed);
         prev & mask != 0
@@ -220,10 +221,10 @@ impl BitVector {
     ///
     /// If any new value is inserted, return true,
     /// else return false.
-    pub fn insert_all(&mut self, all: &BitVector) -> bool {
+    pub fn insert_all(&self, all: &BitVector) -> bool {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
-        for (i, j) in self.vector.iter_mut().zip(&all.vector) {
+        for (i, j) in self.vector.iter().zip(&all.vector) {
 
             let prev = i.fetch_or(j.load(Ordering::Relaxed), Ordering::Relaxed);
 
@@ -247,7 +248,6 @@ impl BitVector {
         self.vector.len()
     }
 
-
     /// Return a iterator of the set element in the bitvector,
     pub fn iter<'a>(&'a self) -> BitVectorIter<'a> {
         BitVectorIter {
@@ -261,7 +261,7 @@ impl BitVector {
 
 impl HeapSizeOf for BitVector {
     fn heap_size_of_children(&self) -> usize {
-        self.vector.capacity() * 8
+        self.vector.capacity() * mem::size_of::<AtomicUsize>()
     }
 }
 
@@ -323,8 +323,8 @@ mod tests {
     use super::*;
     #[test]
     fn union_two_vecs() {
-        let mut vec1 = BitVector::new(65);
-        let mut vec2 = BitVector::new(65);
+        let vec1 = BitVector::new(65);
+        let vec2 = BitVector::new(65);
         assert!(vec1.insert(3));
         assert!(!vec1.insert(3));
         assert!(vec2.insert(5));
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn bitvec_iter_works() {
-        let mut bitvec = BitVector::new(100);
+        let bitvec = BitVector::new(100);
         bitvec.insert(1);
         bitvec.insert(10);
         bitvec.insert(19);
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn bitvec_iter_works_2() {
-        let mut bitvec = BitVector::new(319);
+        let bitvec = BitVector::new(319);
         bitvec.insert(0);
         bitvec.insert(127);
         bitvec.insert(191);
@@ -368,11 +368,11 @@ mod tests {
 
     #[test]
     fn eq_left() {
-        let mut bitvec = BitVector::new(50);
+        let bitvec = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(i);
         }
-        let mut bitvec2 = BitVector::new(50);
+        let bitvec2 = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
             bitvec2.insert(i);
         }
@@ -391,15 +391,15 @@ mod tests {
 
     #[test]
     fn eq() {
-        let mut bitvec = BitVector::new(50);
+        let bitvec = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(i);
         }
-        let mut bitvec2 = BitVector::new(50);
+        let bitvec2 = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
             bitvec2.insert(i);
         }
-        let mut bitvec3 = BitVector::new(50);
+        let bitvec3 = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec3.insert(i);
         }
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut bitvec = BitVector::new(50);
+        let bitvec = BitVector::new(50);
         for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(i);
         }
@@ -426,7 +426,7 @@ mod tests {
     fn is_empty() {
         assert!(!BitVector::ones(60).is_empty());
         assert!(!BitVector::ones(65).is_empty());
-        let mut bvec = BitVector::new(60);
+        let bvec = BitVector::new(60);
 
         assert!(bvec.is_empty());
 
@@ -434,7 +434,7 @@ mod tests {
         assert!(!bvec.is_empty());
         bvec.remove(5);
         assert!(bvec.is_empty());
-        let mut bvec = BitVector::ones(65);
+        let bvec = BitVector::ones(65);
         for i in 0..65 {
             bvec.remove(i);
         }
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(BitVector::ones(60).len(), 60);
         assert_eq!(BitVector::ones(65).len(), 65);
         assert_eq!(BitVector::new(65).len(), 0);
-        let mut bvec = BitVector::new(60);
+        let bvec = BitVector::new(60);
         bvec.insert(5);
         assert_eq!(bvec.len(), 1);
         bvec.insert(6);
@@ -475,8 +475,8 @@ mod bench {
     fn bench_bitset_operator(b: &mut Bencher) {
 
         b.iter(|| {
-            let mut vec1 = BitVector::new(65);
-            let mut vec2 = BitVector::new(65);
+            let vec1 = BitVector::new(65);
+            let vec2 = BitVector::new(65);
             for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
                 vec1.insert(i);
             }
