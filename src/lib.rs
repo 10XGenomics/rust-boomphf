@@ -339,7 +339,7 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
         )
     }
 
-    fn new(mut keys_: Vec<K>, mut data_: Vec<D> ) -> BoomHashMap<K, D> {
+    pub fn new(mut keys_: Vec<K>, mut data_: Vec<D> ) -> BoomHashMap<K, D> {
         let mphf_ = Mphf::new(1.7, &keys_, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
@@ -399,7 +399,7 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         )
     }
 
-    fn new(mut keys_: Vec<K>, mut data_: Vec<D1>, mut aux_data_: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
+    pub fn new(mut keys_: Vec<K>, mut data_: Vec<D1>, mut aux_data_: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
         let mphf_ = Mphf::new(1.7, &keys_, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
