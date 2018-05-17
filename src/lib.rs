@@ -43,6 +43,7 @@ use rayon::prelude::*;
 mod bitvector;
 use bitvector::*;
 
+use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -312,6 +313,129 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 		println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
+}
+
+
+////////////////////////////////
+// Adding Support for new BoomHashMap object
+////////////////////////////////
+// TODO: Don't like copy pasting three versions of Boom, has to be a better way
+pub struct BoomHashMap<K: Clone + Hash + Debug, D> {
+    mphf: Mphf<K>,
+    keys: Vec<K>,
+    values: Vec<D>
+}
+
+impl<K, D> BoomHashMap<K, D>
+where K: Clone + Hash + Debug + PartialEq, D: Debug {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Kmer {{ id: {:?}, Data: {:?} }} \n Lengths {}, {}",
+            self.keys,
+            self.values,
+            self.keys.len(),
+            self.values.len()
+        )
+    }
+
+    fn new(mut keys_: Vec<K>, mut data_: Vec<D> ) -> BoomHashMap<K, D> {
+        let mphf_ = Mphf::new(1.7, &keys_, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        for i in 0 .. keys_.len() {
+            loop {
+                let kmer_slot = mphf_.hash(&keys_[i]) as usize;
+                if i == kmer_slot { break; }
+                keys_.swap(i, kmer_slot);
+                data_.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap{
+            mphf: mphf_,
+            keys: keys_,
+            values: data_,
+        }
+    }
+
+    fn get_data_for_kmer(&self, kmer: K) -> Option<&D> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.clone() {
+                    Some(&self.values[pos as usize])
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+}
+
+// BoomHash with mutiple data
+pub struct BoomHashMap2<K: Clone + Hash + Debug, D1, D2> {
+    mphf: Mphf<K>,
+    keys: Vec<K>,
+    values: Vec<D1>,
+    aux_values: Vec<D2>
+}
+
+impl<K, D1, D2> BoomHashMap2<K, D1, D2>
+where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Kmer {{ id: {:?}, Exts: {:?}, Data: {:?} }} \n Lengths {}, {}, {}",
+            self.keys,
+            self.values,
+            self.aux_values,
+            self.keys.len(),
+            self.values.len(),
+            self.aux_values.len()
+        )
+    }
+
+    fn new(mut keys_: Vec<K>, mut data_: Vec<D1>, mut aux_data_: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
+        let mphf_ = Mphf::new(1.7, &keys_, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        for i in 0 .. keys_.len() {
+            loop {
+                let kmer_slot = mphf_.hash(&keys_[i]) as usize;
+                if i == kmer_slot { break; }
+                keys_.swap(i, kmer_slot);
+                data_.swap(i, kmer_slot);
+                aux_data_.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap2{
+            mphf: mphf_,
+            keys: keys_,
+            values: data_,
+            aux_values: aux_data_,
+        }
+    }
+
+    fn get_data_for_kmer(&self, kmer: K) -> Option<(&D1, &D2)> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.clone() {
+                    Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
 }
 
 
