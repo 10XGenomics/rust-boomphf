@@ -434,7 +434,7 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         let mphf_ = Mphf::new(1.7, &keys_, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        println!("Done Making hash, Now sorting the data according to hash.")
+        println!("Done Making hash, Now sorting the data according to hash.");
         for i in 0 .. keys_.len() {
             loop {
                 let kmer_slot = mphf_.hash(&keys_[i]) as usize;
