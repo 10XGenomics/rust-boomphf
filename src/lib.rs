@@ -231,7 +231,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 
 impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 	/// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
-	/// Configure the number of threads on that threadpool to control CPU usage. 
+	/// Configure the number of threads on that threadpool to control CPU usage.
 	pub fn new_parallel(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
 
 		let n = objects.len();
@@ -281,7 +281,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 					}
 				});
 
-				let redo_keys_tmp : Vec<T> = 
+				let redo_keys_tmp : Vec<T> =
 					(&keys).par_chunks(1<<16).flat_map(|chnk| {
 						let mut redo_keys_chunk = Vec::new();
 
@@ -328,7 +328,7 @@ pub struct BoomHashMap<K: Clone + Hash + Debug, D> {
 
 impl<K, D> BoomHashMap<K, D>
 where K: Clone + Hash + Debug + PartialEq, D: Debug {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    pub fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "Kmer {{ id: {:?}, Data: {:?} }} \n Lengths {}, {}",
@@ -358,13 +358,13 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
         }
     }
 
-    fn get_data_for_kmer(&self, kmer: K) -> Option<&D> {
+    pub fn get_data_for_kmer(&self, kmer: &K) -> Option<&D> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if kmer == hashed_kmer.clone() {
+                if *kmer == hashed_kmer.clone() {
                     Some(&self.values[pos as usize])
                 }
                 else {
@@ -374,6 +374,37 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
             None => None,
         }
     }
+    pub fn get_kmer_id(&self, kmer: &K) -> Option<usize> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some(pos as usize)
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn num_elem(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn get_key(&self, id:usize) -> Option<K> {
+        let max_key_id = self.num_elem();
+        if id > max_key_id {
+            None
+        }
+        else{
+            Some(self.keys[id].clone())
+        }
+    }
+
 }
 
 // BoomHash with mutiple data
@@ -386,7 +417,7 @@ pub struct BoomHashMap2<K: Clone + Hash + Debug, D1, D2> {
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    pub fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "Kmer {{ id: {:?}, Exts: {:?}, Data: {:?} }} \n Lengths {}, {}, {}",
@@ -420,13 +451,13 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         }
     }
 
-    fn get_data_for_kmer(&self, kmer: K) -> Option<(&D1, &D2)> {
+    pub fn get_data_for_kmer(&self, kmer: &K) -> Option<(&D1, &D2)> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if kmer == hashed_kmer.clone() {
+                if *kmer == hashed_kmer.clone() {
                     Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
                 }
                 else {
@@ -434,6 +465,37 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
                 }
             },
             None => None,
+        }
+    }
+
+    pub fn get_kmer_id(&self, kmer: &K) -> Option<usize> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some(pos as usize)
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn num_elem(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn get_key(&self, id:usize) -> Option<K> {
+        let max_key_id = self.num_elem();
+        if id > max_key_id {
+            None
+        }
+        else{
+            Some(self.keys[id].clone())
         }
     }
 }
