@@ -43,12 +43,14 @@ use rayon::prelude::*;
 mod bitvector;
 use bitvector::*;
 
+use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::fmt::Debug;
 
 /// A minimal perfect hash function over a set of objects of type `T`.
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
 	bitvecs: Vec<BitVector>,
@@ -145,7 +147,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		let ranks = Self::compute_ranks(&bitvecs);
 		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
 		let sz = r.heap_size_of_children();
-		println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		println!("\nItems: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
 
@@ -230,7 +232,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 
 impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 	/// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
-	/// Configure the number of threads on that threadpool to control CPU usage. 
+	/// Configure the number of threads on that threadpool to control CPU usage.
 	pub fn new_parallel(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
 
 		let n = objects.len();
@@ -280,7 +282,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 					}
 				});
 
-				let redo_keys_tmp : Vec<T> = 
+				let redo_keys_tmp : Vec<T> =
 					(&keys).par_chunks(1<<16).flat_map(|chnk| {
 						let mut redo_keys_chunk = Vec::new();
 
@@ -312,6 +314,171 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 		println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
+}
+
+
+////////////////////////////////
+// Adding Support for new BoomHashMap object
+////////////////////////////////
+// TODO: Don't like copy pasting three versions of Boom, has to be a better way
+#[derive(Debug)]
+pub struct BoomHashMap<K: Hash, D> {
+    mphf: Mphf<K>,
+    keys: Vec<K>,
+    values: Vec<D>
+}
+
+impl<K, D> BoomHashMap<K, D>
+where K: Clone + Hash + Debug + PartialEq, D: Debug {
+    pub fn new(mut keys: Vec<K>, mut data: Vec<D> ) -> BoomHashMap<K, D> {
+        let mphf = Mphf::new(1.7, &keys, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        for i in 0 .. keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot { break; }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap{
+            mphf: mphf,
+            keys: keys,
+            values: data,
+        }
+    }
+
+    pub fn get(&self, kmer: &K) -> Option<&D> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some(&self.values[pos as usize])
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some(pos as usize)
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn get_key(&self, id:usize) -> Option<&K> {
+        let max_key_id = self.len();
+        if id > max_key_id {
+            None
+        }
+        else{
+            Some(&self.keys[id])
+        }
+    }
+
+}
+
+// BoomHash with mutiple data
+#[derive(Debug)]
+pub struct BoomHashMap2<K: Hash, D1, D2> {
+    mphf: Mphf<K>,
+    keys: Vec<K>,
+    values: Vec<D1>,
+    aux_values: Vec<D2>
+}
+
+impl<K, D1, D2> BoomHashMap2<K, D1, D2>
+where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
+
+    pub fn new(mut keys: Vec<K>, mut data: Vec<D1>, mut aux_data: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new(1.7, &keys, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        println!("Done Making hash, Now sorting the data according to hash.");
+        for i in 0 .. keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot { break; }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+                aux_data.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap2{
+            mphf: mphf,
+            keys: keys,
+            values: data,
+            aux_values: aux_data,
+        }
+    }
+
+    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+
+        let maybe_pos = self.mphf.try_hash(&kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if *kmer == hashed_kmer.clone() {
+                    Some(pos as usize)
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub fn get_key(&self, id:usize) -> Option<&K> {
+        let max_key_id = self.len();
+        if id > max_key_id {
+            None
+        }
+        else{
+            Some(&self.keys[id])
+        }
+    }
 }
 
 
