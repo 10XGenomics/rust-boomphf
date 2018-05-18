@@ -17,6 +17,9 @@ heapsize = ">=0.4.2"
 quickcheck = "0.3"
 bencher = ">=0.1"
 
+[dependencies.log]
+version = "^0.3.7"
+features = ["release_max_level_info"]
 
 [[bench]]
 name = "build"

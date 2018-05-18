@@ -33,6 +33,9 @@ extern crate fnv;
 extern crate heapsize;
 extern crate rayon;
 
+#[macro_use]
+extern crate log;
+
 #[cfg(feature = "serde")]
 #[macro_use]
 extern crate serde;
@@ -43,7 +46,6 @@ use rayon::prelude::*;
 mod bitvector;
 use bitvector::*;
 
-use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -101,7 +103,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 					};
 
 				if max_iters.is_some() && iter > max_iters.unwrap() {
-					println!("ran out of key space. items: {:?}", keys);
+					error!("ran out of key space. items: {:?}", keys);
 					panic!("counldn't find unique hashes");
 				}
 
@@ -147,7 +149,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		let ranks = Self::compute_ranks(&bitvecs);
 		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
 		let sz = r.heap_size_of_children();
-		println!("\nItems: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		info!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
 
@@ -414,7 +416,7 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         let mphf = Mphf::new(1.7, &keys, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        println!("Done Making hash, Now sorting the data according to hash.");
+        info!("Done Making hash, Now sorting the data according to hash.");
         for i in 0 .. keys.len() {
             loop {
                 let kmer_slot = mphf.hash(&keys[i]) as usize;
