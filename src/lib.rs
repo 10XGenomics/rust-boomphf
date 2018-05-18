@@ -50,6 +50,7 @@ use std::marker::PhantomData;
 use std::fmt::Debug;
 
 /// A minimal perfect hash function over a set of objects of type `T`.
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
 	bitvecs: Vec<BitVector>,
@@ -320,7 +321,8 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 // Adding Support for new BoomHashMap object
 ////////////////////////////////
 // TODO: Don't like copy pasting three versions of Boom, has to be a better way
-pub struct BoomHashMap<K: Clone + Hash + Debug, D> {
+#[derive(Debug)]
+pub struct BoomHashMap<K: Hash, D> {
     mphf: Mphf<K>,
     keys: Vec<K>,
     values: Vec<D>
@@ -328,37 +330,26 @@ pub struct BoomHashMap<K: Clone + Hash + Debug, D> {
 
 impl<K, D> BoomHashMap<K, D>
 where K: Clone + Hash + Debug + PartialEq, D: Debug {
-    pub fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Kmer {{ id: {:?}, Data: {:?} }} \n Lengths {}, {}",
-            self.keys,
-            self.values,
-            self.keys.len(),
-            self.values.len()
-        )
-    }
-
-    pub fn new(mut keys_: Vec<K>, mut data_: Vec<D> ) -> BoomHashMap<K, D> {
-        let mphf_ = Mphf::new(1.7, &keys_, None);
+    pub fn new(mut keys: Vec<K>, mut data: Vec<D> ) -> BoomHashMap<K, D> {
+        let mphf = Mphf::new(1.7, &keys, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        for i in 0 .. keys_.len() {
+        for i in 0 .. keys.len() {
             loop {
-                let kmer_slot = mphf_.hash(&keys_[i]) as usize;
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
                 if i == kmer_slot { break; }
-                keys_.swap(i, kmer_slot);
-                data_.swap(i, kmer_slot);
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
             }
         }
         BoomHashMap{
-            mphf: mphf_,
-            keys: keys_,
-            values: data_,
+            mphf: mphf,
+            keys: keys,
+            values: data,
         }
     }
 
-    pub fn get_data_for_kmer(&self, kmer: &K) -> Option<&D> {
+    pub fn get(&self, kmer: &K) -> Option<&D> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
@@ -374,7 +365,7 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
             None => None,
         }
     }
-    pub fn get_kmer_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
@@ -391,24 +382,25 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
         }
     }
 
-    pub fn num_elem(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.keys.len()
     }
 
-    pub fn get_key(&self, id:usize) -> Option<K> {
-        let max_key_id = self.num_elem();
+    pub fn get_key(&self, id:usize) -> Option<&K> {
+        let max_key_id = self.len();
         if id > max_key_id {
             None
         }
         else{
-            Some(self.keys[id].clone())
+            Some(&self.keys[id])
         }
     }
 
 }
 
 // BoomHash with mutiple data
-pub struct BoomHashMap2<K: Clone + Hash + Debug, D1, D2> {
+#[derive(Debug)]
+pub struct BoomHashMap2<K: Hash, D1, D2> {
     mphf: Mphf<K>,
     keys: Vec<K>,
     values: Vec<D1>,
@@ -417,42 +409,30 @@ pub struct BoomHashMap2<K: Clone + Hash + Debug, D1, D2> {
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
-    pub fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Kmer {{ id: {:?}, Exts: {:?}, Data: {:?} }} \n Lengths {}, {}, {}",
-            self.keys,
-            self.values,
-            self.aux_values,
-            self.keys.len(),
-            self.values.len(),
-            self.aux_values.len()
-        )
-    }
 
-    pub fn new(mut keys_: Vec<K>, mut data_: Vec<D1>, mut aux_data_: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
-        let mphf_ = Mphf::new(1.7, &keys_, None);
+    pub fn new(mut keys: Vec<K>, mut data: Vec<D1>, mut aux_data: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new(1.7, &keys, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
         println!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0 .. keys_.len() {
+        for i in 0 .. keys.len() {
             loop {
-                let kmer_slot = mphf_.hash(&keys_[i]) as usize;
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
                 if i == kmer_slot { break; }
-                keys_.swap(i, kmer_slot);
-                data_.swap(i, kmer_slot);
-                aux_data_.swap(i, kmer_slot);
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+                aux_data.swap(i, kmer_slot);
             }
         }
         BoomHashMap2{
-            mphf: mphf_,
-            keys: keys_,
-            values: data_,
-            aux_values: aux_data_,
+            mphf: mphf,
+            keys: keys,
+            values: data,
+            aux_values: aux_data,
         }
     }
 
-    pub fn get_data_for_kmer(&self, kmer: &K) -> Option<(&D1, &D2)> {
+    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
@@ -469,7 +449,7 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         }
     }
 
-    pub fn get_kmer_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
 
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
@@ -486,17 +466,17 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
         }
     }
 
-    pub fn num_elem(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.keys.len()
     }
 
-    pub fn get_key(&self, id:usize) -> Option<K> {
-        let max_key_id = self.num_elem();
+    pub fn get_key(&self, id:usize) -> Option<&K> {
+        let max_key_id = self.len();
         if id > max_key_id {
             None
         }
         else{
-            Some(self.keys[id].clone())
+            Some(&self.keys[id])
         }
     }
 }
