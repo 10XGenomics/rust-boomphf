@@ -402,6 +402,7 @@ where K: Clone + Hash + Debug + PartialEq, D: Debug {
 
 // BoomHash with mutiple data
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap2<K: Hash, D1, D2> {
     mphf: Mphf<K>,
     keys: Vec<K>,
