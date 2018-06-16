@@ -324,6 +324,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 ////////////////////////////////
 // TODO: Don't like copy pasting three versions of Boom, has to be a better way
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap<K: Hash, D> {
     mphf: Mphf<K>,
     keys: Vec<K>,
@@ -331,7 +332,7 @@ pub struct BoomHashMap<K: Hash, D> {
 }
 
 impl<K, D> BoomHashMap<K, D>
-where K: Clone + Hash + Debug + PartialEq, D: Debug {
+where K: Clone + Hash + Debug + PartialEq + Send + Sync , D: Debug {
     pub fn new(mut keys: Vec<K>, mut data: Vec<D> ) -> BoomHashMap<K, D> {
         let mphf = Mphf::new(1.7, &keys, None);
         // trick taken from :
