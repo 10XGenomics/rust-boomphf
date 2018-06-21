@@ -31,8 +31,7 @@ use std::fmt;
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(feature = "serde")]
-#[macro_use]
+
 #[cfg(feature = "serde")]
 #[macro_use]
 use serde;
