@@ -1,4 +1,4 @@
-# Fast and Scalalbe Minimal Perfect Hash Functions in Rust
+# Fast and Scalable Minimal Perfect Hash Functions in Rust
 
 A Rust impl of [**Fast and scalable minimal perfect hashing for massive key sets**](https://arxiv.org/abs/1702.03154).
 
