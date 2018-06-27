@@ -313,7 +313,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 		let ranks = Self::compute_ranks(&bitvecs);
 		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
 		let sz = r.heap_size_of_children();
-		println!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		info!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
 }
@@ -322,7 +322,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 ////////////////////////////////
 // Adding Support for new BoomHashMap object
 ////////////////////////////////
-// TODO: Don't like copy pasting three versions of Boom, has to be a better way
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap<K: Hash, D> {
@@ -332,7 +331,31 @@ pub struct BoomHashMap<K: Hash, D> {
 }
 
 impl<K, D> BoomHashMap<K, D>
-where K: Clone + Hash + Debug + PartialEq + Send + Sync , D: Debug {
+where K: Clone + Hash + Debug + PartialEq + Send + Sync, D: Debug {
+    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        info!("Done Making hash, Now sorting the data according to hash.");
+        for i in 0 .. keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot { break; }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap{
+            mphf: mphf,
+            keys: keys,
+            values: data,
+        }
+    }
+}
+
+
+impl<K, D> BoomHashMap<K, D>
+where K: Clone + Hash + Debug + PartialEq , D: Debug {
     pub fn new(mut keys: Vec<K>, mut data: Vec<D> ) -> BoomHashMap<K, D> {
         let mphf = Mphf::new(1.7, &keys, None);
         // trick taken from :
@@ -354,7 +377,7 @@ where K: Clone + Hash + Debug + PartialEq + Send + Sync , D: Debug {
 
     pub fn get(&self, kmer: &K) -> Option<&D> {
 
-        let maybe_pos = self.mphf.try_hash(&kmer);
+        let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
@@ -368,8 +391,8 @@ where K: Clone + Hash + Debug + PartialEq + Send + Sync , D: Debug {
             None => None,
         }
     }
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
 
+    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
@@ -398,7 +421,6 @@ where K: Clone + Hash + Debug + PartialEq + Send + Sync , D: Debug {
             Some(&self.keys[id])
         }
     }
-
 }
 
 // BoomHash with mutiple data
@@ -409,6 +431,31 @@ pub struct BoomHashMap2<K: Hash, D1, D2> {
     keys: Vec<K>,
     values: Vec<D1>,
     aux_values: Vec<D2>
+}
+
+impl<K, D1, D2> BoomHashMap2<K, D1, D2>
+where K: Clone + Hash + Debug + PartialEq + Send + Sync, D1: Debug, D2: Debug {
+    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D1>, mut aux_data: Vec<D2> ) -> BoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        info!("Done Making hash, Now sorting the data according to hash.");
+        for i in 0 .. keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot { break; }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+                aux_data.swap(i, kmer_slot);
+            }
+        }
+        BoomHashMap2{
+            mphf: mphf,
+            keys: keys,
+            values: data,
+            aux_values: aux_data,
+        }
+    }
 }
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
@@ -438,7 +485,7 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
 
     pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
 
-        let maybe_pos = self.mphf.try_hash(&kmer);
+        let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
@@ -454,7 +501,6 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
     }
 
     pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
-
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
@@ -485,7 +531,51 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
     }
 }
 
+//No Key Hash map
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NoKeyBoomHashMap2<K, D1, D2> {
+    mphf: Mphf<K>,
+	  phantom: PhantomData<K>,
+    values: Vec<D1>,
+    aux_values: Vec<D2>,
+}
 
+impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
+where K: Clone + Hash + Debug + PartialEq + Send + Sync, D1: Debug, D2: Debug {
+    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D1>, mut aux_data: Vec<D2> ) -> NoKeyBoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        // trick taken from :
+        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
+        info!("Done Making hash, Now sorting the data according to hash.");
+        for i in 0 .. keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot { break; }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+                aux_data.swap(i, kmer_slot);
+            }
+        }
+        NoKeyBoomHashMap2{
+            mphf: mphf,
+	          phantom: PhantomData,
+            values: data,
+            aux_values: aux_data,
+        }
+    }
+
+    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
+            },
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 #[macro_use]

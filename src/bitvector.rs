@@ -59,7 +59,6 @@ fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Er
 #[cfg(feature = "serde")]
 pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Error>
     where D: serde::Deserializer<'de> {
-    use std::marker::PhantomData;
     struct AtomicUsizeSeqVisitor;
 
     impl<'de> serde::de::Visitor<'de> for AtomicUsizeSeqVisitor {
