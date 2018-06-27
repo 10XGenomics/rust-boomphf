@@ -46,7 +46,6 @@ use rayon::prelude::*;
 mod bitvector;
 use bitvector::*;
 
-use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -331,6 +330,35 @@ pub struct BoomHashMap<K: Hash, D> {
     values: Vec<D>
 }
 
+pub struct BoomIterator<'a, K: Hash + 'a, D: 'a> {
+    hash: &'a BoomHashMap<K, D>,
+    index: usize,
+}
+
+impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
+    type Item = (&'a K, &'a D);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.hash.keys.len() {
+            return None
+        }
+
+        let elements = Some((&self.hash.keys[self.index], &self.hash.values[self.index]));
+        self.index += 1;
+
+        elements
+    }
+}
+
+impl<'a, K:Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
+    type Item = (&'a K, &'a D);
+    type IntoIter = BoomIterator<'a, K, D>;
+
+    fn into_iter(self) -> BoomIterator<'a, K, D> {
+        BoomIterator { hash: self, index: 0 }
+    }
+}
+
 impl<K, D> BoomHashMap<K, D>
 where K: Clone + Hash + Debug + PartialEq + Send + Sync, D: Debug {
     pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
@@ -432,6 +460,36 @@ pub struct BoomHashMap2<K: Hash, D1, D2> {
     keys: Vec<K>,
     values: Vec<D1>,
     aux_values: Vec<D2>
+}
+
+pub struct Boom2Iterator<'a, K: Hash + 'a, D1: 'a, D2: 'a> {
+    hash: &'a BoomHashMap2<K, D1, D2>,
+    index: usize,
+}
+
+impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
+    type Item = (&'a K, &'a D1, &'a D2);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.hash.keys.len() {
+            return None
+        }
+
+        let elements = Some((&self.hash.keys[self.index],
+                             &self.hash.values[self.index],
+                             &self.hash.aux_values[self.index]));
+        self.index += 1;
+        elements
+    }
+}
+
+impl<'a, K:Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
+    type Item = (&'a K, &'a D1, &'a D2);
+    type IntoIter = Boom2Iterator<'a, K, D1, D2>;
+
+    fn into_iter(self) -> Boom2Iterator<'a, K, D1, D2> {
+        Boom2Iterator { hash: self, index: 0 }
+    }
 }
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
