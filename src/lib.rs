@@ -46,6 +46,7 @@ use rayon::prelude::*;
 mod bitvector;
 use bitvector::*;
 
+use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -149,7 +150,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 		let ranks = Self::compute_ranks(&bitvecs);
 		let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
 		let sz = r.heap_size_of_children();
-		info!("Items: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+		println!("\nItems: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
 		r
 	}
 
