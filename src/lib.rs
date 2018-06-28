@@ -74,9 +74,10 @@ fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
 }
 
 impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
-  pub fn new_with_key<I>(gamma: f64, objects: &'a I, max_iters: Option<u64>,
-                         n: usize) -> Mphf<T>
-  where &'a I: IntoIterator<Item = &'a T> {
+  pub fn new_with_key<I>(gamma: f64, objects: &'a I,
+                         max_iters: Option<u64>, n: usize)
+                         -> Mphf<T>
+  where &'a I: IntoIterator<Item = T> {
 
     let mut iter = 0;
     let mut bitvecs = Vec::new();
@@ -102,7 +103,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         let mut keys_index = 0;
 	      for v in objects {
 		        if ! redo_keys.contains(keys_index) {
-			          let idx = hash_with_seed(seed, v) % size;
+			          let idx = hash_with_seed(seed, &v) % size;
 
 			          if collide.contains(idx as usize) {
 				            continue;
@@ -117,7 +118,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
         keys_index = 0;
 	      for v in objects {
-		        let idx = hash_with_seed(seed, v) % size;
+		        let idx = hash_with_seed(seed, &v) % size;
 
 		        if collide.contains(idx as usize) {
 			          a.remove(idx as usize);
@@ -665,10 +666,10 @@ where K: Clone + Hash + Debug + PartialEq, D1: Debug, D2: Debug {
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NoKeyBoomHashMap2<K, D1, D2> {
-    mphf: Mphf<K>,
-	  phantom: PhantomData<K>,
-    values: Vec<D1>,
-    aux_values: Vec<D2>,
+    pub mphf: Mphf<K>,
+	  pub phantom: PhantomData<K>,
+    pub values: Vec<D1>,
+    pub aux_values: Vec<D2>,
 }
 
 impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
