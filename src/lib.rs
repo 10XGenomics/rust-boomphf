@@ -81,17 +81,17 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
     let mut iter = 0;
     let mut bitvecs = Vec::new();
-    let redo_keys = BitVector::new(std::cmp::max(255, (gamma * n as f64) as usize));
+    let done_keys = BitVector::new(std::cmp::max(255, (gamma * n as f64) as usize));
 
     assert!(gamma > 1.01);
 
     loop {
 	      if max_iters.is_some() && iter > max_iters.unwrap() {
-		        error!("ran out of key space. items: {:?}", redo_keys.len());
+		        error!("ran out of key space. items: {:?}", done_keys.len());
 		        panic!("counldn't find unique hashes");
 	      }
 
-	      let keys_remaining = if iter == 0 { n } else  { redo_keys.len() };
+	      let keys_remaining = if iter == 0 { n } else  { n - done_keys.len() };
 
         let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
 
@@ -102,7 +102,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
         let mut keys_index = 0;
 	      for v in objects {
-		        if ! redo_keys.contains(keys_index) {
+		        if ! done_keys.contains(keys_index) {
 			          let idx = hash_with_seed(seed, &v) % size;
 
 			          if collide.contains(idx as usize) {
@@ -118,20 +118,21 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
         keys_index = 0;
 	      for v in objects {
-		        let idx = hash_with_seed(seed, &v) % size;
+		        if ! done_keys.contains(keys_index) {
+		            let idx = hash_with_seed(seed, &v) % size;
 
-		        if collide.contains(idx as usize) {
-			          a.remove(idx as usize);
-		        }
-		        else{
-			          redo_keys.insert(keys_index as usize);
-		        }
-            keys_index += 1;
+		            if collide.contains(idx as usize) {
+			              a.remove(idx as usize);
+		            }
+		            else{
+			              done_keys.insert(keys_index as usize);
+		            }
+                keys_index += 1;
+            }
 	      }
 
 	      bitvecs.push(a);
-
-	      if redo_keys.len() == 0 {
+	      if done_keys.len() == n {
 		        break;
 	      }
 	      iter += 1;
@@ -140,7 +141,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     let ranks = Self::compute_ranks(&bitvecs);
     let r = Mphf { bitvecs: bitvecs, ranks: ranks, phantom: PhantomData };
     let sz = r.heap_size_of_children();
-    info!("\nItems: {}, Mphf Size: {}, Bits/Item: {}", n, sz, (sz * 8) as f32 / n as f32);
+      info!("\nItems: {}, Mphf Size: {}, Bits/Item: {}",
+            n, sz, (sz * 8) as f32 / n as f32);
     r
   }
 }
