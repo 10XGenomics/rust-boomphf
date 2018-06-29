@@ -66,6 +66,7 @@ impl<T> HeapSizeOf for Mphf<T> {
     }
 }
 
+#[inline]
 fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
     let mut state = fnv::FnvHasher::with_key(iter);
     v.hash(&mut state);
@@ -342,7 +343,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                 (&keys).par_chunks(1 << 16).for_each(|chnk| {
                     for v in chnk.iter() {
                         let idx = hash_with_seed(seed, v) % size;
-
                         if collide.contains(idx as usize) {
                             continue;
                         }
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn test_heap_size_vec() {
         let mut vs = Vec::new();
-        for v in 0..100 {
+        for _ in 0..100 {
             let vn = vec![123usize; 100];
             vs.push(vn);
         }

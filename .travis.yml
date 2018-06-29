@@ -1,0 +1,28 @@
+language: rust
+
+# Cache cargo symbols for faster build
+cache: cargo
+
+env:
+  global:
+    - RUST_BACKTRACE=1
+
+rust:
+  - stable
+
+before_script:
+  - export PATH=$HOME/.cargo/bin:$PATH
+  - cargo install cargo-update || echo "cargo-update already installed"
+  - cargo install cargo-travis || echo "cargo-travis already installed"
+  - cargo install-update -a # update outdated cached binaries
+
+
+# the main build
+script:
+  - cargo build
+  - cargo test
+  - cargo doc
+
+after_success:
+# upload documentation to github.io (gh-pages branch)
+  - cargo doc-upload

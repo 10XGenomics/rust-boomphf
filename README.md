@@ -1,16 +1,24 @@
-# Minimal Perfect Hash Functions
+# Fast and Scalable Minimal Perfect Hash Functions in Rust
 
-An implementation of "Fast and scalable minimal perfect hashing for massive key sets"
-[https://arxiv.org/abs/1702.03154](https://arxiv.org/abs/1702.03154).
+A Rust impl of [**Fast and scalable minimal perfect hashing for massive key sets**](https://arxiv.org/abs/1702.03154).
+
 The library generates a minimal perfect hash functions (MPHF) for a collection of hashable objects. This algorithm generates MPHFs that consume ~3-6 bits/item.  The memory consumption during construction is a small multiple (< 2x) of the size of the dataset and final size of the MPHF. 
 Note, minimal perfect hash functions only return a usable hash value for objects in the set used to create the MPHF. Hashing a new object will return an arbitrary hash value. If your use case may result in hashing new values, you will need an auxiliary scheme to detect this condition.
 
+See [Docs](https://10xgenomics.github.io/rust-boomphf/)
+
+Example usage:
+
  ```
  use boomphf::*;
- // Generate MPHF
+
+ // sample set of obejcts
  let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
  let n = possible_objects.len();
+
+ // generate a minimal perfect hash function of these items
  let phf = Mphf::new(1.7, possible_objects.clone(), None);
+
  // Get hash value of all objects
  let mut hashes = Vec::new();
  for v in possible_objects {

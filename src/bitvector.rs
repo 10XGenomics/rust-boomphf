@@ -1,4 +1,4 @@
-// Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+// Copyright (c) 2018 10x Genomics, Inc. All rights reserved.
 //
 // Note this code was copied from https://github.com/zhaihj/bitvector (MIT licensed),
 // and modified to add rank/select operations, and to use atomic primitives to allow
