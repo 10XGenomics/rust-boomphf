@@ -8,7 +8,6 @@
 //
 // Copyright (c) 2016 Hongjie Zhai
 
-
 //! ### BitVector Module
 //!
 //! BitVector uses one bit to represent a bool state.
@@ -27,26 +26,33 @@
 
 #![cfg_attr(feature = "unstable", feature(test))]
 
-use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use heapsize::HeapSizeOf;
+use std::fmt;
 use std::mem;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
-#[macro_use] use serde;
+#[macro_use]
+use serde;
 
 /// Bitvector
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitVector {
     bits: usize,
-    #[cfg_attr(feature = "serde", serde(serialize_with="ser_atomic_vec", deserialize_with="de_atomic_vec"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "ser_atomic_vec", deserialize_with = "de_atomic_vec")
+    )]
     vector: Vec<AtomicUsize>,
 }
 
 // Custom serializer
 #[cfg(feature = "serde")]
-fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
     use serde::ser::SerializeSeq;
     let mut seq = serializer.serialize_seq(Some(v.len()))?;
     for ref x in v {
@@ -58,7 +64,9 @@ fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Er
 // Custom deserializer
 #[cfg(feature = "serde")]
 pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Error>
-    where D: serde::Deserializer<'de> {
+where
+    D: serde::Deserializer<'de>,
+{
     struct AtomicUsizeSeqVisitor;
 
     impl<'de> serde::de::Visitor<'de> for AtomicUsizeSeqVisitor {
@@ -69,7 +77,9 @@ pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Err
         }
 
         fn visit_seq<S>(self, mut access: S) -> Result<Self::Value, S::Error>
-            where S: serde::de::SeqAccess<'de> {
+        where
+            S: serde::de::SeqAccess<'de>,
+        {
             let mut vec = Vec::<AtomicUsize>::with_capacity(access.size_hint().unwrap_or(0));
 
             while let Some(x) = access.next_element()? {
@@ -85,9 +95,12 @@ pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Err
 impl fmt::Display for BitVector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "["));
-        try!(write!(f,
-                    "{}",
-                    self.iter().fold(String::new(), |x0, x| x0 + &format!("{}, ", x))));
+        try!(write!(
+            f,
+            "{}",
+            self.iter()
+                .fold(String::new(), |x0, x| x0 + &format!("{}, ", x))
+        ));
         write!(f, "]")
     }
 }
@@ -107,7 +120,7 @@ impl BitVector {
     pub fn new(bits: usize) -> Self {
         let n = u64s(bits);
         let mut v = Vec::with_capacity(n);
-        for _ in 0 .. n {
+        for _ in 0..n {
             v.push(to_au(0));
         }
 
@@ -123,8 +136,8 @@ impl BitVector {
     /// have any extra 1 bits.
     pub fn ones(bits: usize) -> Self {
         let (word, offset) = word_offset(bits);
-        let mut bvec = Vec::with_capacity(word+1);
-        for _ in 0 .. word {
+        let mut bvec = Vec::with_capacity(word + 1);
+        for _ in 0..word {
             bvec.push(to_au(usize::max_value()));
         }
 
@@ -147,7 +160,9 @@ impl BitVector {
 
     /// the number of elements in set
     pub fn len(&self) -> usize {
-        self.vector.iter().fold(0usize, |x0, x| x0 + x.load(Ordering::Relaxed).count_ones() as usize)
+        self.vector.iter().fold(0usize, |x0, x| {
+            x0 + x.load(Ordering::Relaxed).count_ones() as usize
+        })
     }
 
     /*
@@ -182,8 +197,12 @@ impl BitVector {
         //
         // self.vector.as_slice()[0 .. word] == other.vector.as_slice[0 .. word]
         //
-        self.vector.iter().zip(other.vector.iter()).take(word).all(|(s1, s2)| s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed)) &&
-        (self.get_word(word) << (63 - offset)) == (other.get_word(word) << (63 - offset))
+        self.vector
+            .iter()
+            .zip(other.vector.iter())
+            .take(word)
+            .all(|(s1, s2)| s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed))
+            && (self.get_word(word) << (63 - offset)) == (other.get_word(word) << (63 - offset))
     }
 
     /// insert a new element to set
@@ -215,7 +234,6 @@ impl BitVector {
         prev & mask != 0
     }
 
-
     /// import elements from another bitvector
     ///
     /// If any new value is inserted, return true,
@@ -224,7 +242,6 @@ impl BitVector {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
         for (i, j) in self.vector.iter().zip(&all.vector) {
-
             let prev = i.fetch_or(j.load(Ordering::Relaxed), Ordering::Relaxed);
 
             if prev != i.load(Ordering::Relaxed) {
@@ -264,7 +281,6 @@ impl HeapSizeOf for BitVector {
     }
 }
 
-
 /// Iterator for BitVector
 pub struct BitVectorIter<'a> {
     iter: ::std::slice::Iter<'a, AtomicUsize>,
@@ -300,8 +316,6 @@ impl<'a> Iterator for BitVectorIter<'a> {
         return Some(self.idx - 1);
     }
 }
-
-
 
 fn u64s(elements: usize) -> usize {
     (elements + 63) / 64
@@ -349,10 +363,11 @@ mod tests {
         bitvec.insert(65);
         bitvec.insert(66);
         bitvec.insert(99);
-        assert_eq!(bitvec.iter().collect::<Vec<_>>(),
-                   [1, 10, 19, 62, 63, 64, 65, 66, 99]);
+        assert_eq!(
+            bitvec.iter().collect::<Vec<_>>(),
+            [1, 10, 19, 62, 63, 64, 65, 66, 99]
+        );
     }
-
 
     #[test]
     fn bitvec_iter_works_2() {
@@ -417,8 +432,10 @@ mod tests {
         assert!(bitvec.contains(3));
         bitvec.remove(3);
         assert!(!bitvec.contains(3));
-        assert_eq!(bitvec.iter().collect::<Vec<_>>(),
-                   vec![0, 1, 5, 11, 12, 19, 23]);
+        assert_eq!(
+            bitvec.iter().collect::<Vec<_>>(),
+            vec![0, 1, 5, 11, 12, 19, 23]
+        );
     }
 
     #[test]
@@ -467,12 +484,11 @@ mod tests {
 #[cfg(all(feature = "unstable", test))]
 mod bench {
     extern crate test;
-    use std::collections::{HashSet, BTreeSet};
     use self::test::Bencher;
     use super::*;
+    use std::collections::{BTreeSet, HashSet};
     #[bench]
     fn bench_bitset_operator(b: &mut Bencher) {
-
         b.iter(|| {
             let vec1 = BitVector::new(65);
             let vec2 = BitVector::new(65);
