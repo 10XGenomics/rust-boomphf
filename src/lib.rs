@@ -106,6 +106,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 			          let idx = hash_with_seed(seed, &v) % size;
 
 			          if collide.contains(idx as usize) {
+                    keys_index += 1;
 				            continue;
 			          }
 			          let a_was_set = !a.insert(idx as usize);
@@ -127,8 +128,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 		            else{
 			              done_keys.insert(keys_index as usize);
 		            }
-                keys_index += 1;
             }
+            keys_index += 1;
 	      }
 
 	      bitvecs.push(a);
