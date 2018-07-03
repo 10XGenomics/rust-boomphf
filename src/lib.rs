@@ -32,6 +32,7 @@
 extern crate fnv;
 extern crate heapsize;
 extern crate rayon;
+extern crate crossbeam;
 
 #[macro_use]
 extern crate log;
@@ -49,7 +50,9 @@ use bitvector::*;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Debug)]
@@ -73,10 +76,15 @@ fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
     state.finish()
 }
 
+pub trait FastIteration {
+    // trait defining function to fast skip the next iteration of the iterator
+    fn skip_next(&mut self);
+}
+
 impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     pub fn new_with_key<I>(gamma: f64, objects: &'a I, max_iters: Option<u64>, n: usize) -> Mphf<T>
     where
-        &'a I: IntoIterator<Item = T>,
+        &'a I: IntoIterator<Item = T>, <&'a I as IntoIterator>::IntoIter: FastIteration
     {
         let mut iter = 0;
         let mut bitvecs = Vec::new();
@@ -99,13 +107,17 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
             let seed = iter;
 
-            let mut keys_index = 0;
-            for v in objects {
+            let mut into_object = objects.into_iter();
+            for keys_index in 0..n {
                 if !done_keys.contains(keys_index) {
-                    let idx = hash_with_seed(seed, &v) % size;
+                    let key = match into_object.next() {
+                        None => panic!("ERROR: max number of items overflowed"),
+                        Some(key) => key,
+                    };
+
+                    let idx = hash_with_seed(seed, &key) % size;
 
                     if collide.contains(idx as usize) {
-                        keys_index += 1;
                         continue;
                     }
                     let a_was_set = !a.insert(idx as usize);
@@ -113,13 +125,20 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                         collide.insert(idx as usize);
                     }
                 }
-                keys_index += 1;
+                else{
+                    into_object.skip_next();
+                }
             }
 
-            keys_index = 0;
-            for v in objects {
+            into_object = objects.into_iter();
+            for keys_index in 0..n {
                 if !done_keys.contains(keys_index) {
-                    let idx = hash_with_seed(seed, &v) % size;
+                    let key = match into_object.next() {
+                        None => panic!("ERROR: max number of items overflowed"),
+                        Some(key) => key,
+                    };
+
+                    let idx = hash_with_seed(seed, &key) % size;
 
                     if collide.contains(idx as usize) {
                         a.remove(idx as usize);
@@ -127,7 +146,9 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                         done_keys.insert(keys_index as usize);
                     }
                 }
-                keys_index += 1;
+                else{
+                    into_object.skip_next();
+                }
             }
 
             bitvecs.push(a);
@@ -391,6 +412,153 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
         let sz = r.heap_size_of_children();
         info!(
             "Items: {}, Mphf Size: {}, Bits/Item: {}",
+            n,
+            sz,
+            (sz * 8) as f32 / n as f32
+        );
+        r
+    }
+}
+
+impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
+
+    fn find_collisions<I>(done_keys: &Arc<BitVector>,
+                          seed: u64, size: u64,
+                          collide: &Arc<BitVector>,
+                          a: &Arc<BitVector>,
+                          objects: &'a I,
+                          num_threads: usize)
+    where
+        &'a I: IntoIterator<Item = T>, <&'a I as IntoIterator>::IntoIter: Send
+    {
+        let queue_index = Arc::new(AtomicUsize::new(0));
+        let queue = Arc::new(Mutex::new(objects.into_iter()));
+
+        crossbeam::scope(|scope| {
+
+            for _ in 0 .. num_threads {
+                let queue = Arc::clone(&queue);
+                let queue_index = Arc::clone(&queue_index);
+
+                scope.spawn(move || {
+                    loop {
+                        match queue.lock().unwrap().next() {
+                            None => break ,
+                            Some(v) => {
+                                let keys_index = queue_index.fetch_add(1, Ordering::SeqCst);
+                                if !done_keys.contains(keys_index) {
+                                    let idx = hash_with_seed(seed, &v) % size;
+
+                                    if collide.contains(idx as usize) {
+                                        continue;
+                                    }
+                                    let a_was_set = !a.insert(idx as usize);
+                                    if a_was_set {
+                                        collide.insert(idx as usize);
+                                    }
+                                }
+                            }, //end-Some
+                        } //end-match
+                    } //end-loop
+                }); // end-scope
+            } // end-for
+        }); //end-crossbeam
+    }
+
+    fn clear_collisions<I>(done_keys: &Arc<BitVector>,
+                           seed: u64, size: u64,
+                           collide: &Arc<BitVector>,
+                           a: &Arc<BitVector>,
+                           objects: &'a I,
+                           num_threads: usize)
+    where
+        &'a I: IntoIterator<Item = T>, <&'a I as IntoIterator>::IntoIter: Send
+    {
+        let queue_index = Arc::new(AtomicUsize::new(0));
+        let queue = Arc::new(Mutex::new(objects.into_iter()));
+
+        crossbeam::scope(|scope| {
+
+            for _ in 0 .. num_threads {
+                let queue = Arc::clone(&queue);
+                let queue_index = Arc::clone(&queue_index);
+
+                scope.spawn(move || {
+                    loop {
+                        match queue.lock().unwrap().next() {
+                            None => break ,
+                            Some(v) => {
+                                let keys_index = queue_index.fetch_add(1, Ordering::SeqCst);
+                                if !done_keys.contains(keys_index) {
+                                    let idx = hash_with_seed(seed, &v) % size;
+
+                                    if collide.contains(idx as usize) {
+                                        a.remove(idx as usize);
+                                    }
+                                    else{
+                                        done_keys.insert(keys_index as usize);
+                                    }
+                                }
+                            }, //end-Some
+                        } //end-match
+                    } //end-loop
+                }); // end-scope
+            } // end-for
+        }); //end-crossbeam
+    }
+
+    pub fn new_parallel_with_key<I>(gamma: f64, objects: &'a I,
+                                    max_iters: Option<u64>,
+                                    n: usize, num_threads: usize)
+                                    -> Mphf<T>
+    where
+        &'a I: IntoIterator<Item = T>, <&'a I as IntoIterator>::IntoIter: Send
+    {
+        let mut iter = 0;
+        let bitvecs = Arc::new(Mutex::new(Vec::<BitVector>::new()));
+        let done_keys = Arc::new(BitVector::new(std::cmp::max(255, n)));
+
+        assert!(gamma > 1.01);
+
+        loop {
+            if max_iters.is_some() && iter > max_iters.unwrap() {
+                error!("ran out of key space. items: {:?}", done_keys.len());
+                panic!("counldn't find unique hashes");
+            }
+
+            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+
+            let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
+
+            let a = Arc::new(BitVector::new(size as usize));
+            let collide = Arc::new(BitVector::new(size as usize));
+
+            Mphf::find_collisions(&done_keys, iter.clone(), size.clone(),
+                                  &collide, &a, objects, num_threads);
+
+            Mphf::clear_collisions(&done_keys, iter.clone(), size.clone(),
+                                   &collide, &a, objects, num_threads);
+
+            let unwrapped_a = Arc::try_unwrap(a).unwrap();
+            let mut lock_bitvecs = bitvecs.lock().unwrap();
+            lock_bitvecs.push(unwrapped_a);
+
+            if done_keys.len() == n {
+                break;
+            }
+            iter += 1;
+        }
+
+        let ranks = Self::compute_ranks(&bitvecs.lock().unwrap());
+        let unwrapped_bitvecs = Arc::try_unwrap(bitvecs).unwrap();
+        let r = Mphf {
+            bitvecs: unwrapped_bitvecs.into_inner().unwrap(),
+            ranks: ranks,
+            phantom: PhantomData,
+        };
+        let sz = r.heap_size_of_children();
+        info!(
+            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
             n,
             sz,
             (sz * 8) as f32 / n as f32
