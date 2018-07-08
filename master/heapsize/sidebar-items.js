@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["heap_size_of","Get the size of a heap block."]],"macro":[["known_heap_size","For use on types defined in external crates with known heap sizes."]],"trait":[["HeapSizeOf",""]]});
