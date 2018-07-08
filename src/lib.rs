@@ -53,7 +53,7 @@ use std::hash::Hasher;
 use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Debug)]
@@ -359,7 +359,9 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
-    pub fn new_parallel(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
+    pub fn new_parallel(gamma: f64, objects: &Vec<T>,
+                        max_iters: Option<u64>,
+                        starting_seed: Option<u64>) -> Mphf<T> {
         let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
@@ -383,7 +385,10 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                 let a = BitVector::new(size as usize);
                 let collide = BitVector::new(size as usize);
 
-                let seed = iter;
+                let seed = match starting_seed {
+                    None => iter,
+                    Some(seed) => iter + seed,
+                };
 
                 (&keys).par_chunks(1 << 16).for_each(|chnk| {
                     for v in chnk.iter() {
@@ -516,15 +521,22 @@ where
 
 impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
-    pub fn new_parallel_with_key<I, N>(gamma: f64, objects: &'a I,
-                                       max_iters: Option<u64>,
-                                       n: usize, num_threads: usize)
-                                    -> Mphf<T>
+    pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
+                                        max_iters: Option<u64>,
+                                        n: usize, num_threads: usize)
+                                        -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
         <N as IntoIterator>::IntoIter: FastIteration,
         <&'a I as IntoIterator>::IntoIter: Send, N: Send + NodeSize, I: Sync
     {
+
+        // TODO CONSTANT, might have to change
+        // Allowing atmost 381Mb for buffer
+        const MAX_BUFFER_SIZE: usize = 50000000;
+        const ONE_PERCENT_KEYS: f32 = 0.01;
+        let min_buffer_keys_threshold: usize = (ONE_PERCENT_KEYS * n as f32) as usize;
+
         let mut iter: u64 = 0;
         let mut bitvecs = Vec::<BitVector>::new();
         let done_keys = Arc::new(BitVector::new(std::cmp::max(255, n)));
@@ -548,17 +560,24 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                   keys_index: usize,
                                   collide: &Arc<BitVector>,
                                   a: &Arc<BitVector>,
-                                  done_keys: &BitVector | {
+                                  done_keys: &BitVector,
+                                  buffer_keys: &Arc<AtomicBool>,
+                                  buffered_keys_vec: &Arc<Mutex<Vec<T>>> | {
             let idx = hash_with_seed(*seed, key) % size;
 
             if collide.contains(idx as usize) {
                 a.remove(idx as usize);
+                if buffer_keys.load(Ordering::SeqCst) {
+                    buffered_keys_vec.lock().unwrap().push(key.clone());
+                }
             }
             else {
                 done_keys.insert(keys_index as usize);
             }
         };
 
+        let buffered_keys_vec = Arc::new(Mutex::new(Vec::new()));
+        let buffer_keys = Arc::new(AtomicBool::new(false));
         loop {
             if max_iters.is_some() && iter > max_iters.unwrap() {
                 error!("ran out of key space. items: {:?}", done_keys.len());
@@ -566,8 +585,12 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             }
 
             let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
-            let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
+            if keys_remaining < MAX_BUFFER_SIZE
+                && keys_remaining < min_buffer_keys_threshold {
+                    buffer_keys.store(true, Ordering::SeqCst);
+            }
 
+            let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
             let a = Arc::new(BitVector::new(size as usize));
             let collide = Arc::new(BitVector::new(size as usize));
 
@@ -577,6 +600,8 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             crossbeam::scope(|scope| {
 
                 for _ in 0 .. num_threads {
+                    let buffer_keys = buffer_keys.clone();
+                    let buffered_keys_vec = buffered_keys_vec.clone();
                     let done_keys_count = done_keys_count.clone();
                     let work_queue = work_queue.clone();
                     let done_keys = done_keys.clone();
@@ -606,7 +631,8 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                         remove_collisions(&iter, &key, &size,
                                                           key_index,
                                                           &collide, &a,
-                                                          &done_keys);
+                                                          &done_keys, &buffer_keys,
+                                                          &buffered_keys_vec);
                                     }
                                 } //end-if
                                 else{
@@ -623,11 +649,20 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             let unwrapped_a = Arc::try_unwrap(a).unwrap();
             bitvecs.push(unwrapped_a);
 
-            if done_keys.len() == n {
+            iter += 1;
+            if buffer_keys.load(Ordering::SeqCst) {
                 break;
             }
-            iter += 1;
         } //end-loop
+
+        let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
+        if buffered_keys_vec.len() > 1 {
+            let buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec,
+                                                   None, Some(iter));
+            for bitvec in buffered_mphf.bitvecs {
+                bitvecs.push(bitvec);
+            }
+        }
 
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
@@ -695,7 +730,7 @@ where
     D: Debug,
 {
     pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
         info!("Done Making hash, Now sorting the data according to hash.");
@@ -843,7 +878,7 @@ where
         mut data: Vec<D1>,
         mut aux_data: Vec<D2>,
     ) -> BoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
         info!("Done Making hash, Now sorting the data according to hash.");
@@ -966,7 +1001,7 @@ where
         mut data: Vec<D1>,
         mut aux_data: Vec<D2>,
     ) -> NoKeyBoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
         // trick taken from :
         // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
         info!("Done Making hash, Now sorting the data according to hash.");
