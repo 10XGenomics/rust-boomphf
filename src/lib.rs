@@ -585,6 +585,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             }
 
             let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+            if keys_remaining == 0 { break; }
             if keys_remaining < MAX_BUFFER_SIZE
                 && keys_remaining < min_buffer_keys_threshold {
                     buffer_keys.store(true, Ordering::SeqCst);
@@ -1016,6 +1017,19 @@ where
                 aux_data.swap(i, kmer_slot);
             }
         }
+        NoKeyBoomHashMap2 {
+            mphf: mphf,
+            phantom: PhantomData,
+            values: data,
+            aux_values: aux_data,
+        }
+    }
+
+    pub fn new_with_mphf(
+        mphf: Mphf<K>,
+        data: Vec<D1>,
+        aux_data: Vec<D2>,
+    ) -> NoKeyBoomHashMap2<K, D1, D2> {
         NoKeyBoomHashMap2 {
             mphf: mphf,
             phantom: PhantomData,
