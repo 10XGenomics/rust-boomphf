@@ -16,7 +16,7 @@
 //! // Generate MPHF
 //! let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
 //! let n = possible_objects.len();
-//! let phf = Mphf::new(1.7, &possible_objects, None);
+//! let phf = Mphf::new(1.7, &possible_objects);
 //! // Get hash value of all objects
 //! let mut hashes = Vec::new();
 //! for v in possible_objects {
@@ -44,6 +44,7 @@ extern crate serde;
 use heapsize::HeapSizeOf;
 use rayon::prelude::*;
 
+pub mod hashmap;
 mod bitvector;
 use bitvector::*;
 
@@ -54,6 +55,20 @@ use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+
+
+#[inline]
+fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+    let mut state = fnv::FnvHasher::with_key(iter);
+    v.hash(&mut state);
+    state.finish()
+}
+
+/// Trait for iterators that can skip values efficiently if the client knows they aren't needed.
+pub trait FastIterator: Iterator {
+    /// Skip the next item in the iterator, without returning it.
+    fn skip_next(&mut self);
+}
 
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Debug)]
@@ -70,27 +85,15 @@ impl<T> HeapSizeOf for Mphf<T> {
     }
 }
 
-#[inline]
-fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
-    let mut state = fnv::FnvHasher::with_key(iter);
-    v.hash(&mut state);
-    state.finish()
-}
+const MAX_ITERS: u64 = 100;
 
-pub trait FastIteration {
-    // trait defining function to fast skip the next iteration of the iterator
-    fn skip_next(&mut self);
-}
-pub trait NodeSize {
-    fn num_windows(&self) -> usize;
-}
-
+#[cfg(feature = "fast-constructors")]
 impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
-    pub fn new_with_key<I, N>(gamma: f64, objects: &'a I, max_iters: Option<u64>, n: usize) -> Mphf<T>
+    pub fn new_with_key<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-        <N as IntoIterator>::IntoIter: FastIteration,
-        <&'a I as IntoIterator>::IntoIter: Send, N: Send + NodeSize, I: Sync
+        <N as IntoIterator>::IntoIter: FastIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
     {
         let mut iter = 0;
         let mut bitvecs = Vec::new();
@@ -99,7 +102,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         assert!(gamma > 1.01);
 
         loop {
-            if max_iters.is_some() && iter > max_iters.unwrap() {
+            if iter > MAX_ITERS {
                 error!("ran out of key space. items: {:?}", done_keys.len());
                 panic!("counldn't find unique hashes");
             }
@@ -115,14 +118,14 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
             let mut offset = 0;
 
             for object in objects {
-                let num_windows = object.num_windows();
-                let mut into_object = object.into_iter();
+                let len = object.len();
+                let mut object_iter = object.into_iter();
 
-                for mut keys_index in 0..num_windows {
-                    keys_index += offset;
+                for object_index in 0..len {
+                    let index = offset + object_index;
 
-                    if !done_keys.contains(keys_index) {
-                        let key = match into_object.next() {
+                    if !done_keys.contains(index) {
+                        let key = match object_iter.next() {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
@@ -138,23 +141,23 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                         }
                     }
                     else{
-                        into_object.skip_next();
+                        object_iter.skip_next();
                     }
                 }// end-window for
 
-                offset += num_windows;
+                offset += len;
             }// end-objects for
 
             let mut offset = 0;
             for object in objects {
-                let num_windows = object.num_windows();
-                let mut into_object = object.into_iter();
+                let len = object.len();
+                let mut object_iter = object.into_iter();
 
-                for mut keys_index in 0..num_windows {
-                    keys_index += offset;
+                for object_index in 0..len {
+                    let index = offset + object_index;
 
-                    if !done_keys.contains(keys_index) {
-                        let key = match into_object.next() {
+                    if !done_keys.contains(index) {
+                        let key = match object_iter.next() {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
@@ -164,15 +167,15 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                         if collide.contains(idx as usize) {
                             a.remove(idx as usize);
                         } else {
-                            done_keys.insert(keys_index as usize);
+                            done_keys.insert(index as usize);
                         }
                     }
                     else{
-                        into_object.skip_next();
+                        object_iter.skip_next();
                     }
                 } // end-window for
 
-                offset += num_windows;
+                offset += len;
             } // end- objects for
 
             bitvecs.push(a);
@@ -205,7 +208,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
-    pub fn new(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
+    pub fn new(gamma: f64, objects: &Vec<T>) -> Mphf<T> {
         let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
@@ -220,7 +223,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if max_iters.is_some() && iter > max_iters.unwrap() {
+                if iter > MAX_ITERS {
                     error!("ran out of key space. items: {:?}", keys);
                     panic!("counldn't find unique hashes");
                 }
@@ -360,7 +363,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
     pub fn new_parallel(gamma: f64, objects: &Vec<T>,
-                        max_iters: Option<u64>,
                         starting_seed: Option<u64>) -> Mphf<T> {
         let n = objects.len();
         let mut bitvecs = Vec::new();
@@ -376,7 +378,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if max_iters.is_some() && iter > max_iters.unwrap() {
+                if iter > MAX_ITERS {
                     println!("ran out of key space. items: {:?}", keys);
                     panic!("counldn't find unique hashes");
                 }
@@ -449,6 +451,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     }
 }
 
+#[cfg(feature = "fast-constructors")]
 struct Queue<'a, I: 'a, N, T>
 where
     &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>
@@ -465,10 +468,11 @@ where
     phantom_n: PhantomData<N>,
 }
 
+#[cfg(feature = "fast-constructors")]
 impl<'a, I: 'a, N, T> Queue<'a, I, N, T>
 where
     &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-    <N as IntoIterator>::IntoIter: FastIteration, N: NodeSize {
+    <N as IntoIterator>::IntoIter: FastIterator, N: ExactSizeIterator {
 
     fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, N, T>
     {
@@ -508,7 +512,7 @@ where
 
         let node = self.queue.next().unwrap();
         let node_keys_start = self.last_key_index;
-        let num_keys = node.num_windows();
+        let num_keys = node.len();
 
         self.last_key_index += num_keys;
 
@@ -519,6 +523,7 @@ where
     }
 }
 
+#[cfg(feature = "fast-constructors")]
 impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
     pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
@@ -527,8 +532,8 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                         -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-        <N as IntoIterator>::IntoIter: FastIteration,
-        <&'a I as IntoIterator>::IntoIter: Send, N: Send + NodeSize, I: Sync
+        <N as IntoIterator>::IntoIter: FastIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
     {
 
         // TODO CONSTANT, might have to change
@@ -658,8 +663,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
         if buffered_keys_vec.len() > 1 {
-            let buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec,
-                                                   None, Some(iter));
+            let buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
             for bitvec in buffered_mphf.bitvecs {
                 bitvecs.push(bitvec);
             }
@@ -682,371 +686,6 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
     }
 }
 
-////////////////////////////////
-// Adding Support for new BoomHashMap object
-////////////////////////////////
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BoomHashMap<K: Hash, D> {
-    mphf: Mphf<K>,
-    keys: Vec<K>,
-    values: Vec<D>,
-}
-
-pub struct BoomIterator<'a, K: Hash + 'a, D: 'a> {
-    hash: &'a BoomHashMap<K, D>,
-    index: usize,
-}
-
-impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
-    type Item = (&'a K, &'a D);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index == self.hash.keys.len() {
-            return None;
-        }
-
-        let elements = Some((&self.hash.keys[self.index], &self.hash.values[self.index]));
-        self.index += 1;
-
-        elements
-    }
-}
-
-impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
-    type Item = (&'a K, &'a D);
-    type IntoIter = BoomIterator<'a, K, D>;
-
-    fn into_iter(self) -> BoomIterator<'a, K, D> {
-        BoomIterator {
-            hash: self,
-            index: 0,
-        }
-    }
-}
-
-impl<K, D> BoomHashMap<K, D>
-where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
-    D: Debug,
-{
-    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        info!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-            }
-        }
-        BoomHashMap {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-        }
-    }
-}
-
-impl<K, D> BoomHashMap<K, D>
-where
-    K: Clone + Hash + Debug + PartialEq,
-    D: Debug,
-{
-    pub fn new(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
-        let mphf = Mphf::new(1.7, &keys, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-            }
-        }
-        BoomHashMap {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-        }
-    }
-
-    pub fn get(&self, kmer: &K) -> Option<&D> {
-        let maybe_pos = self.mphf.try_hash(kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(&self.values[pos as usize])
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
-    }
-
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(pos as usize)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
-
-    pub fn get_key(&self, id: usize) -> Option<&K> {
-        let max_key_id = self.len();
-        if id > max_key_id {
-            None
-        } else {
-            Some(&self.keys[id])
-        }
-    }
-}
-
-// BoomHash with mutiple data
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BoomHashMap2<K: Hash, D1, D2> {
-    mphf: Mphf<K>,
-    keys: Vec<K>,
-    values: Vec<D1>,
-    aux_values: Vec<D2>,
-}
-
-pub struct Boom2Iterator<'a, K: Hash + 'a, D1: 'a, D2: 'a> {
-    hash: &'a BoomHashMap2<K, D1, D2>,
-    index: usize,
-}
-
-impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
-    type Item = (&'a K, &'a D1, &'a D2);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index == self.hash.keys.len() {
-            return None;
-        }
-
-        let elements = Some((
-            &self.hash.keys[self.index],
-            &self.hash.values[self.index],
-            &self.hash.aux_values[self.index],
-        ));
-        self.index += 1;
-        elements
-    }
-}
-
-impl<'a, K: Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
-    type Item = (&'a K, &'a D1, &'a D2);
-    type IntoIter = Boom2Iterator<'a, K, D1, D2>;
-
-    fn into_iter(self) -> Boom2Iterator<'a, K, D1, D2> {
-        Boom2Iterator {
-            hash: self,
-            index: 0,
-        }
-    }
-}
-
-impl<K, D1, D2> BoomHashMap2<K, D1, D2>
-where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
-    D1: Debug,
-    D2: Debug,
-{
-    pub fn new_parallel(
-        mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
-    ) -> BoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        info!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
-            }
-        }
-        BoomHashMap2 {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-            aux_values: aux_data,
-        }
-    }
-}
-
-impl<K, D1, D2> BoomHashMap2<K, D1, D2>
-where
-    K: Clone + Hash + Debug + PartialEq,
-    D1: Debug,
-    D2: Debug,
-{
-    pub fn new(
-        mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
-    ) -> BoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new(1.7, &keys, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        info!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
-            }
-        }
-        BoomHashMap2 {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-            aux_values: aux_data,
-        }
-    }
-
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
-        let maybe_pos = self.mphf.try_hash(kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
-    }
-
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(pos as usize)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
-
-    pub fn get_key(&self, id: usize) -> Option<&K> {
-        let max_key_id = self.len();
-        if id > max_key_id {
-            None
-        } else {
-            Some(&self.keys[id])
-        }
-    }
-}
-
-//No Key Hash map
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct NoKeyBoomHashMap2<K, D1, D2> {
-    pub mphf: Mphf<K>,
-    pub phantom: PhantomData<K>,
-    pub values: Vec<D1>,
-    pub aux_values: Vec<D2>,
-}
-
-impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
-where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
-    D1: Debug,
-    D2: Debug,
-{
-    pub fn new_parallel(
-        mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
-    ) -> NoKeyBoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        info!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
-            }
-        }
-        NoKeyBoomHashMap2 {
-            mphf: mphf,
-            phantom: PhantomData,
-            values: data,
-            aux_values: aux_data,
-        }
-    }
-
-    pub fn new_with_mphf(
-        mphf: Mphf<K>,
-        data: Vec<D1>,
-        aux_data: Vec<D2>,
-    ) -> NoKeyBoomHashMap2<K, D1, D2> {
-        NoKeyBoomHashMap2 {
-            mphf: mphf,
-            phantom: PhantomData,
-            values: data,
-            aux_values: aux_data,
-        }
-    }
-
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
-        let maybe_pos = self.mphf.try_hash(kmer);
-        match maybe_pos {
-            Some(pos) => Some((&self.values[pos as usize], &self.aux_values[pos as usize])),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 #[macro_use]
 extern crate quickcheck;
@@ -1061,22 +700,23 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug,
+        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
     {
-        check_mphf_serial(&xs) && check_mphf_parallel(&xs)
+        let mut xsv: Vec<T> = Vec::new();
+        xsv.extend(xs.into_iter());
+
+        // test single-shot data input
+        check_mphf_serial(&xsv) && check_mphf_parallel(&xsv)
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_serial<T>(xs: &HashSet<T>) -> bool
+    fn check_mphf_serial<T>(xsv: &Vec<T>) -> bool
     where
         T: Hash + PartialEq + Eq + Clone + Debug,
     {
-        let mut xsv: Vec<T> = Vec::new();
-        xsv.extend(xs.iter().cloned());
-        let n = xsv.len();
 
         // Generate the MPHF
-        let phf = Mphf::new(1.7, &xsv, None);
+        let phf = Mphf::new(1.7, &xsv);
 
         // Hash all the elements of xs
         let mut hashes = Vec::new();
@@ -1088,21 +728,17 @@ mod tests {
         hashes.sort();
 
         // Hashes must equal 0 .. n
-        let gt: Vec<u64> = (0..n as u64).collect();
+        let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_parallel<T>(xs: &HashSet<T>) -> bool
+    fn check_mphf_parallel<T>(xsv: &Vec<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug,
+        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
     {
-        let mut xsv: Vec<T> = Vec::new();
-        xsv.extend(xs.iter().cloned());
-        let n = xsv.len();
-
         // Generate the MPHF
-        let phf = Mphf::new(1.7, &xsv, None);
+        let phf = Mphf::new_parallel(1.7, &xsv, None);
 
         // Hash all the elements of xs
         let mut hashes = Vec::new();
@@ -1114,7 +750,7 @@ mod tests {
         hashes.sort();
 
         // Hashes must equal 0 .. n
-        let gt: Vec<u64> = (0..n as u64).collect();
+        let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
     }
 
@@ -1151,13 +787,7 @@ mod tests {
     #[test]
     fn from_ints_serial() {
         let items = (0..1000000).map(|x| x * 2);
-        assert!(check_mphf_serial(&HashSet::from_iter(items)));
-    }
-
-    #[test]
-    fn from_ints_parallel() {
-        let items = (0..1000000).map(|x| x * 2);
-        assert!(check_mphf_parallel(&HashSet::from_iter(items)));
+        assert!(check_mphf(HashSet::from_iter(items)));
     }
 
     use heapsize::HeapSizeOf;

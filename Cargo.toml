@@ -25,3 +25,6 @@ features = ["release_max_level_info"]
 [[bench]]
 name = "build"
 harness = false
+
+[features]
+fast-constructors = []
