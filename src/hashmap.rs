@@ -89,6 +89,13 @@ where
             Some(&self.keys[id])
         }
     }
+
+    pub fn iter(&self) -> BoomIterator<K, D> {
+        BoomIterator {
+            hash: self,
+            index: 0,
+        }
+    }
 }
 
 impl<K, D> BoomHashMap<K, D>
@@ -257,6 +264,14 @@ where
 
     pub fn len(&self) -> usize {
         self.keys.len()
+    }
+
+    // Return iterator over key-values pairs
+    pub fn iter(&self) -> Boom2Iterator<K, D1, D2> {
+        Boom2Iterator {
+            hash: self,
+            index: 0,
+        }
     }
 
     pub fn get_key(&self, id: usize) -> Option<&K> {

@@ -524,7 +524,7 @@ where
 }
 
 #[cfg(feature = "fast-constructors")]
-impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
+impl<'a, T: 'a + Hash + Clone + Debug + Send > Mphf<T> {
 
     pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
                                         max_iters: Option<u64>,
