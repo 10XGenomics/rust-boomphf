@@ -51,11 +51,10 @@ use bitvector::*;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
-use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
-
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 
 #[inline]
 fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
@@ -524,7 +523,7 @@ where
 }
 
 #[cfg(feature = "fast-constructors")]
-impl<'a, T: 'a + Hash + Clone + Debug + Send > Mphf<T> {
+impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync > Mphf<T> {
 
     pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
                                         max_iters: Option<u64>,
