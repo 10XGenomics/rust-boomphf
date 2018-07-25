@@ -59,7 +59,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "fast-constructors")]
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
-
 #[inline]
 fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
     let mut state = fnv::FnvHasher::with_key(iter);
