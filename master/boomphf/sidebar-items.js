@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["BoomHashMap",""],["BoomHashMap2",""],["Mphf","A minimal perfect hash function over a set of objects of type `T`."]]});
+initSidebarItems({"mod":[["hashmap","HashMap data structures, using MPHFs to encode the position of each key in a dense array."]],"struct":[["Mphf","A minimal perfect hash function over a set of objects of type `T`."]],"trait":[["FastIterator","Trait for iterators that can skip values efficiently if the client knows they aren't needed."]]});
