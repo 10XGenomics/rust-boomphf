@@ -1,6 +1,6 @@
 [package]
 name = "boomphf"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Patrick Marks <pmarks@gmail.com>"]
 repository = "https://github.com/10XGenomics/rust-boomphf"
 homepage = "https://github.com/10XGenomics/rust-boomphf"
