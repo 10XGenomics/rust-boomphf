@@ -811,6 +811,9 @@
 <span id="811">811</span>
 <span id="812">812</span>
 <span id="813">813</span>
+<span id="814">814</span>
+<span id="815">815</span>
+<span id="816">816</span>
 </pre><pre class="rust ">
 <span class="comment">// Copyright (c) 2017 10X Genomics, Inc. All rights reserved.</span>
 <span class="comment">// Copyright (c) 2015 Guillaume Rizk</span>
@@ -867,6 +870,7 @@
 <span class="kw">use</span> <span class="ident">std</span>::<span class="ident">hash</span>::<span class="ident">Hasher</span>;
 <span class="kw">use</span> <span class="ident">std</span>::<span class="ident">marker</span>::<span class="ident">PhantomData</span>;
 
+
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;fast-constructors&quot;</span>)]</span>
 <span class="kw">use</span> <span class="ident">std</span>::<span class="ident">sync</span>::{<span class="ident">Arc</span>, <span class="ident">Mutex</span>};
 
@@ -907,9 +911,9 @@
 <span class="kw">impl</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">T</span>: <span class="lifetime">&#39;a</span> <span class="op">+</span> <span class="ident">Hash</span> <span class="op">+</span> <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Debug</span><span class="op">&gt;</span> <span class="ident">Mphf</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> {
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new_with_key</span><span class="op">&lt;</span><span class="ident">I</span>, <span class="ident">N</span><span class="op">&gt;</span>(<span class="ident">gamma</span>: <span class="ident">f64</span>, <span class="ident">objects</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>, <span class="ident">n</span>: <span class="ident">usize</span>) <span class="op">-&gt;</span> <span class="ident">Mphf</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>
     <span class="kw">where</span>
-        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span>,
-        <span class="op">&lt;</span><span class="ident">N</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">FastIterator</span>,
-        <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">Send</span>, <span class="ident">N</span>: <span class="ident">Send</span> <span class="op">+</span> <span class="ident">ExactSizeIterator</span>, <span class="ident">I</span>: <span class="ident">Sync</span>
+        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span>,
+        <span class="op">&lt;</span><span class="ident">N</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">FastIterator</span> <span class="op">+</span> <span class="ident">ExactSizeIterator</span>,
+        <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">Send</span>, <span class="ident">I</span>: <span class="ident">Sync</span>
     {
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">iter</span> <span class="op">=</span> <span class="number">0</span>;
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">bitvecs</span> <span class="op">=</span> <span class="ident">Vec</span>::<span class="ident">new</span>();
@@ -934,8 +938,8 @@
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">offset</span> <span class="op">=</span> <span class="number">0</span>;
 
             <span class="kw">for</span> <span class="ident">object</span> <span class="kw">in</span> <span class="ident">objects</span> {
-                <span class="kw">let</span> <span class="ident">len</span> <span class="op">=</span> <span class="ident">object</span>.<span class="ident">len</span>();
                 <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">object_iter</span> <span class="op">=</span> <span class="ident">object</span>.<span class="ident">into_iter</span>();
+                <span class="kw">let</span> <span class="ident">len</span> <span class="op">=</span> <span class="ident">object_iter</span>.<span class="ident">len</span>();
 
                 <span class="kw">for</span> <span class="ident">object_index</span> <span class="kw">in</span> <span class="number">0</span>..<span class="ident">len</span> {
                     <span class="kw">let</span> <span class="ident">index</span> <span class="op">=</span> <span class="ident">offset</span> <span class="op">+</span> <span class="ident">object_index</span>;
@@ -966,8 +970,8 @@
 
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">offset</span> <span class="op">=</span> <span class="number">0</span>;
             <span class="kw">for</span> <span class="ident">object</span> <span class="kw">in</span> <span class="ident">objects</span> {
-                <span class="kw">let</span> <span class="ident">len</span> <span class="op">=</span> <span class="ident">object</span>.<span class="ident">len</span>();
                 <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">object_iter</span> <span class="op">=</span> <span class="ident">object</span>.<span class="ident">into_iter</span>();
+                <span class="kw">let</span> <span class="ident">len</span> <span class="op">=</span> <span class="ident">object_iter</span>.<span class="ident">len</span>();
 
                 <span class="kw">for</span> <span class="ident">object_index</span> <span class="kw">in</span> <span class="number">0</span>..<span class="ident">len</span> {
                     <span class="kw">let</span> <span class="ident">index</span> <span class="op">=</span> <span class="ident">offset</span> <span class="op">+</span> <span class="ident">object_index</span>;
@@ -1268,9 +1272,10 @@
 }
 
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;fast-constructors&quot;</span>)]</span>
-<span class="kw">struct</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>: <span class="lifetime">&#39;a</span>, <span class="ident">N</span>, <span class="ident">T</span><span class="op">&gt;</span>
+<span class="kw">struct</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>: <span class="lifetime">&#39;a</span>, <span class="ident">T</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-    <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span>
+    <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span>,
+    <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">Item</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span>
 {
     <span class="ident">keys_object</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>,
     <span class="ident">queue</span>: <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>,
@@ -1281,16 +1286,16 @@
     <span class="ident">job_id</span>: <span class="ident">u8</span>,
 
     <span class="ident">phantom_t</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>,
-    <span class="ident">phantom_n</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">N</span><span class="op">&gt;</span>,
 }
 
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;fast-constructors&quot;</span>)]</span>
-<span class="kw">impl</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>: <span class="lifetime">&#39;a</span>, <span class="ident">N</span>, <span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>, <span class="ident">N</span>, <span class="ident">T</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>: <span class="lifetime">&#39;a</span>, <span class="ident">N1</span>, <span class="ident">N2</span>, <span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>, <span class="ident">T</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-    <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span>,
-    <span class="op">&lt;</span><span class="ident">N</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">FastIterator</span>, <span class="ident">N</span>: <span class="ident">ExactSizeIterator</span> {
+    <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span><span class="op">=</span><span class="ident">N1</span><span class="op">&gt;</span>,
+    <span class="ident">N2</span>: <span class="ident">Iterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">FastIterator</span> <span class="op">+</span> <span class="ident">ExactSizeIterator</span>,
+    <span class="ident">N1</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span>, <span class="ident">IntoIter</span> <span class="op">=</span> <span class="ident">N2</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Clone</span> {
 
-    <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">object</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>, <span class="ident">num_keys</span>: <span class="ident">usize</span>) <span class="op">-&gt;</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>, <span class="ident">N</span>, <span class="ident">T</span><span class="op">&gt;</span>
+    <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">object</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>, <span class="ident">num_keys</span>: <span class="ident">usize</span>) <span class="op">-&gt;</span> <span class="ident">Queue</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">I</span>, <span class="ident">T</span><span class="op">&gt;</span>
     {
         <span class="ident">Queue</span>{
             <span class="ident">keys_object</span>: <span class="ident">object</span>,
@@ -1302,11 +1307,10 @@
             <span class="ident">job_id</span>: <span class="number">0</span>,
 
             <span class="ident">phantom_t</span>: <span class="ident">PhantomData</span>,
-            <span class="ident">phantom_n</span>: <span class="ident">PhantomData</span>,
         }
     }
 
-    <span class="kw">fn</span> <span class="ident">next</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">done_keys_count</span>: <span class="kw-2">&amp;</span><span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">AtomicUsize</span><span class="op">&gt;</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Option</span><span class="op">&lt;</span>(<span class="ident">N</span>, <span class="ident">u8</span>, <span class="ident">usize</span>, <span class="ident">usize</span>)<span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">next</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">done_keys_count</span>: <span class="kw-2">&amp;</span><span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">AtomicUsize</span><span class="op">&gt;</span>) <span class="op">-&gt;</span> <span class="prelude-ty">Option</span><span class="op">&lt;</span>(<span class="ident">N2</span>, <span class="ident">u8</span>, <span class="ident">usize</span>, <span class="ident">usize</span>)<span class="op">&gt;</span> {
         <span class="kw">if</span> <span class="self">self</span>.<span class="ident">last_key_index</span> <span class="op">==</span> <span class="self">self</span>.<span class="ident">num_keys</span> {
             <span class="kw">loop</span> {
                 <span class="kw">let</span> <span class="ident">done_count</span> <span class="op">=</span> <span class="ident">done_keys_count</span>.<span class="ident">load</span>(<span class="ident">Ordering</span>::<span class="ident">SeqCst</span>);
@@ -1328,11 +1332,12 @@
 
         <span class="kw">let</span> <span class="ident">node</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">queue</span>.<span class="ident">next</span>().<span class="ident">unwrap</span>();
         <span class="kw">let</span> <span class="ident">node_keys_start</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">last_key_index</span>;
-        <span class="kw">let</span> <span class="ident">num_keys</span> <span class="op">=</span> <span class="ident">node</span>.<span class="ident">len</span>();
+        
+        <span class="kw">let</span> <span class="ident">num_keys</span> <span class="op">=</span> <span class="ident">node</span>.<span class="ident">clone</span>().<span class="ident">into_iter</span>().<span class="ident">len</span>();
 
         <span class="self">self</span>.<span class="ident">last_key_index</span> <span class="op">+=</span> <span class="ident">num_keys</span>;
 
-        <span class="kw">return</span> <span class="prelude-val">Some</span>( (<span class="ident">node</span>, <span class="self">self</span>.<span class="ident">job_id</span>,
+        <span class="kw">return</span> <span class="prelude-val">Some</span>((<span class="ident">node</span>.<span class="ident">into_iter</span>(), <span class="self">self</span>.<span class="ident">job_id</span>,
                       <span class="ident">node_keys_start</span>,
                       <span class="ident">num_keys</span>)
         );
@@ -1347,9 +1352,10 @@
                                         <span class="ident">n</span>: <span class="ident">usize</span>, <span class="ident">num_threads</span>: <span class="ident">usize</span>)
                                         <span class="op">-&gt;</span> <span class="ident">Mphf</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>
     <span class="kw">where</span>
-        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span>,
-        <span class="op">&lt;</span><span class="ident">N</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">FastIterator</span>,
-        <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">Send</span>, <span class="ident">N</span>: <span class="ident">Send</span> <span class="op">+</span> <span class="ident">ExactSizeIterator</span>, <span class="ident">I</span>: <span class="ident">Sync</span>
+        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">N</span><span class="op">&gt;</span>, 
+        <span class="ident">N</span>: <span class="ident">IntoIterator</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">T</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Clone</span>,
+        <span class="op">&lt;</span><span class="ident">N</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">FastIterator</span> <span class="op">+</span> <span class="ident">ExactSizeIterator</span>,
+        <span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">I</span> <span class="kw">as</span> <span class="ident">IntoIterator</span><span class="op">&gt;</span>::<span class="ident">IntoIter</span>: <span class="ident">Send</span>, <span class="ident">I</span>: <span class="ident">Sync</span>
     {
 
         <span class="comment">// TODO CONSTANT, might have to change</span>
