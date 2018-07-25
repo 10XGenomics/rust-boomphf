@@ -31,7 +31,6 @@ use std::fmt;
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-
 #[cfg(feature = "serde")]
 #[macro_use]
 use serde;
@@ -68,7 +67,6 @@ pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Err
 where
     D: serde::Deserializer<'de>,
 {
-    use std::marker::PhantomData;
     struct AtomicUsizeSeqVisitor;
 
     impl<'de> serde::de::Visitor<'de> for AtomicUsizeSeqVisitor {

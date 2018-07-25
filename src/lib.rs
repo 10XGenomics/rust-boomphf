@@ -16,7 +16,7 @@
 //! // Generate MPHF
 //! let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
 //! let n = possible_objects.len();
-//! let phf = Mphf::new(1.7, &possible_objects, None);
+//! let phf = Mphf::new(1.7, &possible_objects);
 //! // Get hash value of all objects
 //! let mut hashes = Vec::new();
 //! for v in possible_objects {
@@ -32,6 +32,10 @@
 extern crate fnv;
 extern crate heapsize;
 extern crate rayon;
+extern crate crossbeam;
+
+#[macro_use]
+extern crate log;
 
 #[cfg(feature = "serde")]
 #[macro_use]
@@ -40,6 +44,7 @@ extern crate serde;
 use heapsize::HeapSizeOf;
 use rayon::prelude::*;
 
+pub mod hashmap;
 mod bitvector;
 use bitvector::*;
 
@@ -47,6 +52,25 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
+
+#[cfg(feature = "fast-constructors")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "fast-constructors")]
+use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+
+#[inline]
+fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+    let mut state = fnv::FnvHasher::with_key(iter);
+    v.hash(&mut state);
+    state.finish()
+}
+
+/// Trait for iterators that can skip values efficiently if the client knows they aren't needed.
+pub trait FastIterator: Iterator {
+    /// Skip the next item in the iterator, without returning it.
+    fn skip_next(&mut self);
+}
 
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Debug)]
@@ -63,11 +87,121 @@ impl<T> HeapSizeOf for Mphf<T> {
     }
 }
 
-#[inline]
-fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
-    let mut state = fnv::FnvHasher::with_key(iter);
-    v.hash(&mut state);
-    state.finish()
+const MAX_ITERS: u64 = 100;
+
+#[cfg(feature = "fast-constructors")]
+impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
+    pub fn new_with_key<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
+    where
+        &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
+        <N as IntoIterator>::IntoIter: FastIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
+    {
+        let mut iter = 0;
+        let mut bitvecs = Vec::new();
+        let done_keys = BitVector::new(std::cmp::max(255, n));
+
+        assert!(gamma > 1.01);
+
+        loop {
+            if iter > MAX_ITERS {
+                error!("ran out of key space. items: {:?}", done_keys.len());
+                panic!("counldn't find unique hashes");
+            }
+
+            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+
+            let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
+
+            let a = BitVector::new(size as usize);
+            let collide = BitVector::new(size as usize);
+
+            let seed = iter;
+            let mut offset = 0;
+
+            for object in objects {
+                let len = object.len();
+                let mut object_iter = object.into_iter();
+
+                for object_index in 0..len {
+                    let index = offset + object_index;
+
+                    if !done_keys.contains(index) {
+                        let key = match object_iter.next() {
+                            None => panic!("ERROR: max number of items overflowed"),
+                            Some(key) => key,
+                        };
+
+                        let idx = hash_with_seed(seed, &key) % size;
+
+                        if collide.contains(idx as usize) {
+                            continue;
+                        }
+                        let a_was_set = !a.insert(idx as usize);
+                        if a_was_set {
+                            collide.insert(idx as usize);
+                        }
+                    }
+                    else{
+                        object_iter.skip_next();
+                    }
+                }// end-window for
+
+                offset += len;
+            }// end-objects for
+
+            let mut offset = 0;
+            for object in objects {
+                let len = object.len();
+                let mut object_iter = object.into_iter();
+
+                for object_index in 0..len {
+                    let index = offset + object_index;
+
+                    if !done_keys.contains(index) {
+                        let key = match object_iter.next() {
+                            None => panic!("ERROR: max number of items overflowed"),
+                            Some(key) => key,
+                        };
+
+                        let idx = hash_with_seed(seed, &key) % size;
+
+                        if collide.contains(idx as usize) {
+                            a.remove(idx as usize);
+                        } else {
+                            done_keys.insert(index as usize);
+                        }
+                    }
+                    else{
+                        object_iter.skip_next();
+                    }
+                } // end-window for
+
+                offset += len;
+            } // end- objects for
+
+            bitvecs.push(a);
+            if done_keys.len() == n {
+                break;
+            }
+            iter += 1;
+        }
+
+        let ranks = Self::compute_ranks(&bitvecs);
+        let r = Mphf {
+            bitvecs: bitvecs,
+            ranks: ranks,
+            phantom: PhantomData,
+        };
+        let sz = r.heap_size_of_children();
+        info!(
+            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
+            n,
+            sz,
+            (sz * 8) as f32 / n as f32
+        );
+        r
+    }
 }
 
 impl<T: Hash + Clone + Debug> Mphf<T> {
@@ -76,7 +210,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
-    pub fn new(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
+    pub fn new(gamma: f64, objects: &Vec<T>) -> Mphf<T> {
         let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
@@ -91,8 +225,8 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if max_iters.is_some() && iter > max_iters.unwrap() {
-                    println!("ran out of key space. items: {:?}", keys);
+                if iter > MAX_ITERS {
+                    error!("ran out of key space. items: {:?}", keys);
                     panic!("counldn't find unique hashes");
                 }
 
@@ -142,7 +276,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
             phantom: PhantomData,
         };
         let sz = r.heap_size_of_children();
-        println!(
+        info!(
             "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
             n,
             sz,
@@ -230,7 +364,8 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
-    pub fn new_parallel(gamma: f64, objects: &Vec<T>, max_iters: Option<u64>) -> Mphf<T> {
+    pub fn new_parallel(gamma: f64, objects: &Vec<T>,
+                        starting_seed: Option<u64>) -> Mphf<T> {
         let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
@@ -245,7 +380,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if max_iters.is_some() && iter > max_iters.unwrap() {
+                if iter > MAX_ITERS {
                     println!("ran out of key space. items: {:?}", keys);
                     panic!("counldn't find unique hashes");
                 }
@@ -254,12 +389,14 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                 let a = BitVector::new(size as usize);
                 let collide = BitVector::new(size as usize);
 
-                let seed = iter;
+                let seed = match starting_seed {
+                    None => iter,
+                    Some(seed) => iter + seed,
+                };
 
                 (&keys).par_chunks(1 << 16).for_each(|chnk| {
                     for v in chnk.iter() {
                         let idx = hash_with_seed(seed, v) % size;
-
                         if collide.contains(idx as usize) {
                             continue;
                         }
@@ -306,7 +443,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
             phantom: PhantomData,
         };
         let sz = r.heap_size_of_children();
-        println!(
+        info!(
             "Items: {}, Mphf Size: {}, Bits/Item: {}",
             n,
             sz,
@@ -316,170 +453,238 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     }
 }
 
-////////////////////////////////
-// Adding Support for new BoomHashMap object
-////////////////////////////////
-// TODO: Don't like copy pasting three versions of Boom, has to be a better way
-#[derive(Debug)]
-pub struct BoomHashMap<K: Hash, D> {
-    mphf: Mphf<K>,
-    keys: Vec<K>,
-    values: Vec<D>,
+#[cfg(feature = "fast-constructors")]
+struct Queue<'a, I: 'a, N, T>
+where
+    &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>
+{
+    keys_object: &'a I,
+    queue: <&'a I as IntoIterator>::IntoIter,
+
+    num_keys: usize,
+    last_key_index: usize,
+
+    job_id: u8,
+
+    phantom_t: PhantomData<T>,
+    phantom_n: PhantomData<N>,
 }
 
-impl<K, D> BoomHashMap<K, D>
+#[cfg(feature = "fast-constructors")]
+impl<'a, I: 'a, N, T> Queue<'a, I, N, T>
 where
-    K: Clone + Hash + Debug + PartialEq,
-    D: Debug,
-{
-    pub fn new(mut keys: Vec<K>, mut data: Vec<D>) -> BoomHashMap<K, D> {
-        let mphf = Mphf::new(1.7, &keys, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        for i in 0..keys.len() {
+    &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
+    <N as IntoIterator>::IntoIter: FastIterator, N: ExactSizeIterator {
+
+    fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, N, T>
+    {
+        Queue{
+            keys_object: object,
+            queue: object.into_iter(),
+
+            num_keys: num_keys,
+            last_key_index: 0,
+
+            job_id: 0,
+
+            phantom_t: PhantomData,
+            phantom_n: PhantomData,
+        }
+    }
+
+    fn next(&mut self, done_keys_count: &Arc<AtomicUsize>) -> Option<(N, u8, usize, usize)> {
+        if self.last_key_index == self.num_keys {
             loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
+                let done_count = done_keys_count.load(Ordering::SeqCst);
+
+                if self.num_keys == done_count {
+                    self.queue = self.keys_object.into_iter();
+                    done_keys_count.store(0, Ordering::SeqCst);
+                    self.last_key_index = 0;
+                    self.job_id += 1;
+
                     break;
                 }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
             }
         }
-        BoomHashMap {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-        }
-    }
 
-    pub fn get(&self, kmer: &K) -> Option<&D> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(&self.values[pos as usize])
-                } else {
-                    None
-                }
-            }
-            None => None,
+        if self.job_id > 1 {
+            return None;
         }
-    }
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(pos as usize)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        }
-    }
 
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
+        let node = self.queue.next().unwrap();
+        let node_keys_start = self.last_key_index;
+        let num_keys = node.len();
 
-    pub fn get_key(&self, id: usize) -> Option<&K> {
-        let max_key_id = self.len();
-        if id > max_key_id {
-            None
-        } else {
-            Some(&self.keys[id])
-        }
+        self.last_key_index += num_keys;
+
+        return Some( (node, self.job_id,
+                      node_keys_start,
+                      num_keys)
+        );
     }
 }
 
-// BoomHash with mutiple data
-#[derive(Debug)]
-pub struct BoomHashMap2<K: Hash, D1, D2> {
-    mphf: Mphf<K>,
-    keys: Vec<K>,
-    values: Vec<D1>,
-    aux_values: Vec<D2>,
-}
+#[cfg(feature = "fast-constructors")]
+impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
-impl<K, D1, D2> BoomHashMap2<K, D1, D2>
-where
-    K: Clone + Hash + Debug + PartialEq,
-    D1: Debug,
-    D2: Debug,
-{
-    pub fn new(
-        mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
-    ) -> BoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new(1.7, &keys, None);
-        // trick taken from :
-        // https://github.com/10XDev/cellranger/blob/master/lib/rust/detect_chemistry/src/index.rs#L123
-        println!("Done Making hash, Now sorting the data according to hash.");
-        for i in 0..keys.len() {
-            loop {
-                let kmer_slot = mphf.hash(&keys[i]) as usize;
-                if i == kmer_slot {
-                    break;
-                }
-                keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
-            }
-        }
-        BoomHashMap2 {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-            aux_values: aux_data,
-        }
-    }
+    pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
+                                        max_iters: Option<u64>,
+                                        n: usize, num_threads: usize)
+                                        -> Mphf<T>
+    where
+        &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
+        <N as IntoIterator>::IntoIter: FastIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
+    {
 
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
-                } else {
-                    None
+        // TODO CONSTANT, might have to change
+        // Allowing atmost 381Mb for buffer
+        const MAX_BUFFER_SIZE: usize = 50000000;
+        const ONE_PERCENT_KEYS: f32 = 0.01;
+        let min_buffer_keys_threshold: usize = (ONE_PERCENT_KEYS * n as f32) as usize;
+
+        let mut iter: u64 = 0;
+        let mut bitvecs = Vec::<BitVector>::new();
+        let done_keys = Arc::new(BitVector::new(std::cmp::max(255, n)));
+
+        assert!(gamma > 1.01);
+
+        let find_collisions = | seed: &u64, key: &T, size: &u64,
+                                collide: &Arc<BitVector>,
+                                a: &Arc<BitVector> | {
+            let idx = hash_with_seed(*seed, key) % size;
+
+            if ! collide.contains(idx as usize) {
+                let a_was_set = !a.insert(idx as usize);
+                if a_was_set {
+                    collide.insert(idx as usize);
                 }
             }
-            None => None,
-        }
-    }
+        };
 
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
-        let maybe_pos = self.mphf.try_hash(&kmer);
-        match maybe_pos {
-            Some(pos) => {
-                let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
-                    Some(pos as usize)
-                } else {
-                    None
+        let remove_collisions = | seed: &u64, key: &T, size: &u64,
+                                  keys_index: usize,
+                                  collide: &Arc<BitVector>,
+                                  a: &Arc<BitVector>,
+                                  done_keys: &BitVector,
+                                  buffer_keys: &Arc<AtomicBool>,
+                                  buffered_keys_vec: &Arc<Mutex<Vec<T>>> | {
+            let idx = hash_with_seed(*seed, key) % size;
+
+            if collide.contains(idx as usize) {
+                a.remove(idx as usize);
+                if buffer_keys.load(Ordering::SeqCst) {
+                    buffered_keys_vec.lock().unwrap().push(key.clone());
                 }
             }
-            None => None,
-        }
-    }
+            else {
+                done_keys.insert(keys_index as usize);
+            }
+        };
 
-    pub fn len(&self) -> usize {
-        self.keys.len()
-    }
+        let buffered_keys_vec = Arc::new(Mutex::new(Vec::new()));
+        let buffer_keys = Arc::new(AtomicBool::new(false));
+        loop {
+            if max_iters.is_some() && iter > max_iters.unwrap() {
+                error!("ran out of key space. items: {:?}", done_keys.len());
+                panic!("counldn't find unique hashes");
+            }
 
-    pub fn get_key(&self, id: usize) -> Option<&K> {
-        let max_key_id = self.len();
-        if id > max_key_id {
-            None
-        } else {
-            Some(&self.keys[id])
+            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+            if keys_remaining == 0 { break; }
+            if keys_remaining < MAX_BUFFER_SIZE
+                && keys_remaining < min_buffer_keys_threshold {
+                    buffer_keys.store(true, Ordering::SeqCst);
+            }
+
+            let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
+            let a = Arc::new(BitVector::new(size as usize));
+            let collide = Arc::new(BitVector::new(size as usize));
+
+            let work_queue = Arc::new(Mutex::new(Queue::new(objects, n)));
+            let done_keys_count = Arc::new(AtomicUsize::new(0));
+
+            crossbeam::scope(|scope| {
+
+                for _ in 0 .. num_threads {
+                    let buffer_keys = buffer_keys.clone();
+                    let buffered_keys_vec = buffered_keys_vec.clone();
+                    let done_keys_count = done_keys_count.clone();
+                    let work_queue = work_queue.clone();
+                    let done_keys = done_keys.clone();
+                    let collide = collide.clone();
+                    let a = a.clone();
+
+                    scope.spawn(move || {
+                        loop {
+
+                            let (node, job_id, offset, num_keys) =
+                                match work_queue.lock().unwrap().next(&done_keys_count) {
+                                    None => break,
+                                    Some(val) => val,
+                                };
+
+                            let mut into_node = node.into_iter();
+                            for index in 0..num_keys {
+                                let key_index = offset + index;
+                                if !done_keys.contains(key_index) {
+                                    let key = into_node.next().unwrap();
+
+                                    if job_id == 0 {
+                                        find_collisions(&iter, &key, &size,
+                                                        &collide, &a);
+                                    }
+                                    else {
+                                        remove_collisions(&iter, &key, &size,
+                                                          key_index,
+                                                          &collide, &a,
+                                                          &done_keys, &buffer_keys,
+                                                          &buffered_keys_vec);
+                                    }
+                                } //end-if
+                                else{
+                                    into_node.skip_next();
+                                }
+                            }
+
+                            done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
+                        } //end-loop
+                    }); //end-scope
+                } //end-threads-for
+            }); //end-crossbeam
+
+            let unwrapped_a = Arc::try_unwrap(a).unwrap();
+            bitvecs.push(unwrapped_a);
+
+            iter += 1;
+            if buffer_keys.load(Ordering::SeqCst) {
+                break;
+            }
+        } //end-loop
+
+        let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
+        if buffered_keys_vec.len() > 1 {
+            let buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
+            for bitvec in buffered_mphf.bitvecs {
+                bitvecs.push(bitvec);
+            }
         }
+
+        let ranks = Self::compute_ranks(&bitvecs);
+        let r = Mphf {
+            bitvecs: bitvecs,
+            ranks: ranks,
+            phantom: PhantomData,
+        };
+        let sz = r.heap_size_of_children();
+        info!(
+            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
+            n,
+            sz,
+            (sz * 8) as f32 / n as f32
+        );
+        r
     }
 }
 
@@ -497,22 +702,23 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug,
+        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
     {
-        check_mphf_serial(&xs) && check_mphf_parallel(&xs)
+        let mut xsv: Vec<T> = Vec::new();
+        xsv.extend(xs.into_iter());
+
+        // test single-shot data input
+        check_mphf_serial(&xsv) && check_mphf_parallel(&xsv)
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_serial<T>(xs: &HashSet<T>) -> bool
+    fn check_mphf_serial<T>(xsv: &Vec<T>) -> bool
     where
         T: Hash + PartialEq + Eq + Clone + Debug,
     {
-        let mut xsv: Vec<T> = Vec::new();
-        xsv.extend(xs.iter().cloned());
-        let n = xsv.len();
 
         // Generate the MPHF
-        let phf = Mphf::new(1.7, &xsv, None);
+        let phf = Mphf::new(1.7, &xsv);
 
         // Hash all the elements of xs
         let mut hashes = Vec::new();
@@ -524,21 +730,17 @@ mod tests {
         hashes.sort();
 
         // Hashes must equal 0 .. n
-        let gt: Vec<u64> = (0..n as u64).collect();
+        let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_parallel<T>(xs: &HashSet<T>) -> bool
+    fn check_mphf_parallel<T>(xsv: &Vec<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug,
+        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
     {
-        let mut xsv: Vec<T> = Vec::new();
-        xsv.extend(xs.iter().cloned());
-        let n = xsv.len();
-
         // Generate the MPHF
-        let phf = Mphf::new(1.7, &xsv, None);
+        let phf = Mphf::new_parallel(1.7, &xsv, None);
 
         // Hash all the elements of xs
         let mut hashes = Vec::new();
@@ -550,7 +752,7 @@ mod tests {
         hashes.sort();
 
         // Hashes must equal 0 .. n
-        let gt: Vec<u64> = (0..n as u64).collect();
+        let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
     }
 
@@ -587,13 +789,7 @@ mod tests {
     #[test]
     fn from_ints_serial() {
         let items = (0..1000000).map(|x| x * 2);
-        assert!(check_mphf_serial(&HashSet::from_iter(items)));
-    }
-
-    #[test]
-    fn from_ints_parallel() {
-        let items = (0..1000000).map(|x| x * 2);
-        assert!(check_mphf_parallel(&HashSet::from_iter(items)));
+        assert!(check_mphf(HashSet::from_iter(items)));
     }
 
     use heapsize::HeapSizeOf;
