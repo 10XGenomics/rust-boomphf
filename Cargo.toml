@@ -12,14 +12,14 @@ fnv = ">=1.0"
 serde = { version=">=1.0", optional = true, features=["derive"] }
 rayon = ">=1.0"
 heapsize = ">=0.4.2"
-crossbeam = "0.3.2"
+crossbeam = ">=0.3"
 
 [dev-dependencies]
 quickcheck = "0.3"
 bencher = ">=0.1"
 
 [dependencies.log]
-version = "^0.3.7"
+version = "0.4"
 features = ["release_max_level_info"]
 
 [[bench]]

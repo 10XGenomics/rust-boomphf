@@ -51,9 +51,12 @@ use bitvector::*;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
+#[cfg(feature = "fast-constructors")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "fast-constructors")]
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 
@@ -524,7 +527,7 @@ where
 }
 
 #[cfg(feature = "fast-constructors")]
-impl<'a, T: 'a + Hash + Clone + Debug + Send > Mphf<T> {
+impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
     pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
                                         max_iters: Option<u64>,
