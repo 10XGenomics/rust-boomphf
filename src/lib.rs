@@ -53,6 +53,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 
+
 #[cfg(feature = "fast-constructors")]
 use std::sync::{Arc, Mutex};
 
@@ -93,9 +94,9 @@ const MAX_ITERS: u64 = 100;
 impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     pub fn new_with_key<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
     where
-        &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-        <N as IntoIterator>::IntoIter: FastIterator,
-        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
+        &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T> + Send,
+        <N as IntoIterator>::IntoIter: FastIterator + ExactSizeIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, I: Sync
     {
         let mut iter = 0;
         let mut bitvecs = Vec::new();
@@ -120,8 +121,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
             let mut offset = 0;
 
             for object in objects {
-                let len = object.len();
                 let mut object_iter = object.into_iter();
+                let len = object_iter.len();
 
                 for object_index in 0..len {
                     let index = offset + object_index;
@@ -152,8 +153,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
             let mut offset = 0;
             for object in objects {
-                let len = object.len();
                 let mut object_iter = object.into_iter();
+                let len = object_iter.len();
 
                 for object_index in 0..len {
                     let index = offset + object_index;
@@ -454,9 +455,10 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 }
 
 #[cfg(feature = "fast-constructors")]
-struct Queue<'a, I: 'a, N, T>
+struct Queue<'a, I: 'a, T>
 where
-    &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>
+    &'a I: IntoIterator,
+    <&'a I as IntoIterator>::Item: IntoIterator<Item = T>
 {
     keys_object: &'a I,
     queue: <&'a I as IntoIterator>::IntoIter,
@@ -467,16 +469,16 @@ where
     job_id: u8,
 
     phantom_t: PhantomData<T>,
-    phantom_n: PhantomData<N>,
 }
 
 #[cfg(feature = "fast-constructors")]
-impl<'a, I: 'a, N, T> Queue<'a, I, N, T>
+impl<'a, I: 'a, N1, N2, T> Queue<'a, I, T>
 where
-    &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-    <N as IntoIterator>::IntoIter: FastIterator, N: ExactSizeIterator {
+    &'a I: IntoIterator<Item=N1>,
+    N2: Iterator<Item = T> + FastIterator + ExactSizeIterator,
+    N1: IntoIterator<Item = T, IntoIter = N2> + Clone {
 
-    fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, N, T>
+    fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, T>
     {
         Queue{
             keys_object: object,
@@ -488,11 +490,10 @@ where
             job_id: 0,
 
             phantom_t: PhantomData,
-            phantom_n: PhantomData,
         }
     }
 
-    fn next(&mut self, done_keys_count: &Arc<AtomicUsize>) -> Option<(N, u8, usize, usize)> {
+    fn next(&mut self, done_keys_count: &Arc<AtomicUsize>) -> Option<(N2, u8, usize, usize)> {
         if self.last_key_index == self.num_keys {
             loop {
                 let done_count = done_keys_count.load(Ordering::SeqCst);
@@ -514,11 +515,12 @@ where
 
         let node = self.queue.next().unwrap();
         let node_keys_start = self.last_key_index;
-        let num_keys = node.len();
+        
+        let num_keys = node.clone().into_iter().len();
 
         self.last_key_index += num_keys;
 
-        return Some( (node, self.job_id,
+        return Some((node.into_iter(), self.job_id,
                       node_keys_start,
                       num_keys)
         );
@@ -533,9 +535,10 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                         n: usize, num_threads: usize)
                                         -> Mphf<T>
     where
-        &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T>,
-        <N as IntoIterator>::IntoIter: FastIterator,
-        <&'a I as IntoIterator>::IntoIter: Send, N: Send + ExactSizeIterator, I: Sync
+        &'a I: IntoIterator<Item = N>, 
+        N: IntoIterator<Item = T> + Send + Clone,
+        <N as IntoIterator>::IntoIter: FastIterator + ExactSizeIterator,
+        <&'a I as IntoIterator>::IntoIter: Send, I: Sync
     {
 
         // TODO CONSTANT, might have to change
