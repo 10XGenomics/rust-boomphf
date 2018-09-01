@@ -306,6 +306,63 @@ where
 /// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NoKeyBoomHashMap<K, D1> {
+    pub mphf: Mphf<K>,
+    pub values: Vec<D1>,
+}
+
+impl<K, D1> NoKeyBoomHashMap<K, D1>
+where
+    K: Clone + Hash + Debug + PartialEq + Send + Sync,
+    D1: Debug,
+{
+    pub fn new_parallel(
+        mut keys: Vec<K>,
+        mut data: Vec<D1>,
+    ) -> NoKeyBoomHashMap<K, D1> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        for i in 0..keys.len() {
+            loop {
+                let kmer_slot = mphf.hash(&keys[i]) as usize;
+                if i == kmer_slot {
+                    break;
+                }
+                keys.swap(i, kmer_slot);
+                data.swap(i, kmer_slot);
+            }
+        }
+
+        NoKeyBoomHashMap {
+            mphf: mphf,
+            values: data,
+        }
+    }
+
+    pub fn new_with_mphf(
+        mphf: Mphf<K>,
+        data: Vec<D1>,
+    ) -> NoKeyBoomHashMap<K, D1> {
+        NoKeyBoomHashMap {
+            mphf: mphf,
+            values: data,
+        }
+    }
+
+    /// Get the value associated with `key`, if available, otherwise return None
+    pub fn get(&self, kmer: &K) -> Option<&D1> {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => Some(&self.values[pos as usize]),
+            _ => None,
+        }
+    }
+}
+
+
+/// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
+/// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NoKeyBoomHashMap2<K, D1, D2> {
     pub mphf: Mphf<K>,
     pub values: Vec<D1>,
