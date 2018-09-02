@@ -256,6 +256,7 @@ impl BitVector {
         self.bits
     }
 
+    #[inline]
     pub fn get_word(&self, word: usize) -> u64 {
         self.vector[word].load(Ordering::Relaxed) as u64
     }
