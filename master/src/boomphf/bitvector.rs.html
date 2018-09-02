@@ -557,6 +557,7 @@
 <span id="557">557</span>
 <span id="558">558</span>
 <span id="559">559</span>
+<span id="560">560</span>
 </pre><pre class="rust ">
 <span class="comment">// Copyright (c) 2018 10x Genomics, Inc. All rights reserved.</span>
 <span class="comment">//</span>
@@ -816,6 +817,7 @@
         <span class="self">self</span>.<span class="ident">bits</span>
     }
 
+    <span class="attribute">#[<span class="ident">inline</span>]</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">get_word</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">word</span>: <span class="ident">usize</span>) <span class="op">-&gt;</span> <span class="ident">u64</span> {
         <span class="self">self</span>.<span class="ident">vector</span>[<span class="ident">word</span>].<span class="ident">load</span>(<span class="ident">Ordering</span>::<span class="ident">Relaxed</span>) <span class="kw">as</span> <span class="ident">u64</span>
     }
