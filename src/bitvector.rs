@@ -26,9 +26,12 @@
 
 #![cfg_attr(feature = "unstable", feature(test))]
 
+#[cfg(feature = "heapsize")]
 use heapsize::HeapSizeOf;
-use std::fmt;
+#[cfg(feature = "heapsize")]
 use std::mem;
+
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
@@ -276,6 +279,7 @@ impl BitVector {
     }
 }
 
+#[cfg(feature = "heapsize")]
 impl HeapSizeOf for BitVector {
     fn heap_size_of_children(&self) -> usize {
         self.vector.capacity() * mem::size_of::<AtomicUsize>()

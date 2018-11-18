@@ -30,6 +30,8 @@
 //! ```
 
 extern crate fnv;
+
+#[cfg(feature = "heapsize")]
 extern crate heapsize;
 extern crate rayon;
 extern crate crossbeam;
@@ -41,6 +43,7 @@ extern crate log;
 #[macro_use]
 extern crate serde;
 
+#[cfg(feature = "heapsize")]
 use heapsize::HeapSizeOf;
 use rayon::prelude::*;
 
@@ -82,6 +85,7 @@ pub struct Mphf<T> {
     phantom: PhantomData<T>,
 }
 
+#[cfg(feature = "heapsize")]
 impl<T> HeapSizeOf for Mphf<T> {
     fn heap_size_of_children(&self) -> usize {
         self.bitvecs.heap_size_of_children() + self.ranks.heap_size_of_children()
@@ -194,13 +198,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
             ranks: ranks,
             phantom: PhantomData,
         };
-        let sz = r.heap_size_of_children();
-        info!(
-            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
-            n,
-            sz,
-            (sz * 8) as f32 / n as f32
-        );
+
+        r.log_heap_size(n);
         r
     }
 }
@@ -276,14 +275,23 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
             ranks: ranks,
             phantom: PhantomData,
         };
-        let sz = r.heap_size_of_children();
-        info!(
-            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
-            n,
-            sz,
-            (sz * 8) as f32 / n as f32
-        );
+
+        r.log_heap_size(n);
         r
+    }
+
+    
+    fn log_heap_size(&self, _items: usize) {
+        #[cfg(feature = "heapsize")]
+        {
+            let sz = self.heap_size_of_children();
+            info!(
+                "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
+                _items,
+                sz,
+                (sz * 8) as f32 / _items as f32
+            );
+        }
     }
 
     fn compute_ranks(bvs: &Vec<BitVector>) -> Vec<Vec<u64>> {
@@ -443,13 +451,8 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
             ranks: ranks,
             phantom: PhantomData,
         };
-        let sz = r.heap_size_of_children();
-        info!(
-            "Items: {}, Mphf Size: {}, Bits/Item: {}",
-            n,
-            sz,
-            (sz * 8) as f32 / n as f32
-        );
+
+        r.log_heap_size(n);
         r
     }
 }
@@ -680,13 +683,8 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             ranks: ranks,
             phantom: PhantomData,
         };
-        let sz = r.heap_size_of_children();
-        info!(
-            "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
-            n,
-            sz,
-            (sz * 8) as f32 / n as f32
-        );
+
+        r.log_heap_size(n);
         r
     }
 }
@@ -795,22 +793,27 @@ mod tests {
         assert!(check_mphf(HashSet::from_iter(items)));
     }
 
-    use heapsize::HeapSizeOf;
-    #[test]
-    fn test_heap_size_vec() {
-        let mut vs = Vec::new();
-        for _ in 0..100 {
-            let vn = vec![123usize; 100];
-            vs.push(vn);
-        }
-        println!("heap_size: {}", vs.heap_size_of_children());
-        assert!(vs.heap_size_of_children() > 80000);
-    }
+    #[cfg(feature = "heapsize")]
+    mod heap_size {
+        use heapsize::HeapSizeOf;
+        use super::*;
 
-    #[test]
-    fn test_heap_size_bv() {
-        let bv = BitVector::new(100000);
-        println!("heap_size: {}", bv.heap_size_of_children());
-        assert!(bv.heap_size_of_children() > 100000 / 64);
+        #[test]
+        fn test_heap_size_vec() {
+            let mut vs = Vec::new();
+            for _ in 0..100 {
+                let vn = vec![123usize; 100];
+                vs.push(vn);
+            }
+            println!("heap_size: {}", vs.heap_size_of_children());
+            assert!(vs.heap_size_of_children() > 80000);
+        }
+
+        #[test]
+        fn test_heap_size_bv() {
+            let bv = BitVector::new(100000);
+            println!("heap_size: {}", bv.heap_size_of_children());
+            assert!(bv.heap_size_of_children() > 100000 / 64);
+        }
     }
 }
