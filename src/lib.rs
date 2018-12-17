@@ -622,7 +622,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                     let collide = collide.clone();
                     let a = a.clone();
 
-                    scope.spawn(move || {
+                    scope.spawn(move |_| {
                         loop {
 
                             let (node, job_id, offset, num_keys) =
