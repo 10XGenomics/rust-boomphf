@@ -55,12 +55,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
-
-
-#[cfg(feature = "fast-constructors")]
 use std::sync::{Arc, Mutex};
-
-#[cfg(feature = "fast-constructors")]
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 #[inline]
@@ -68,12 +63,6 @@ fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
     let mut state = fnv::FnvHasher::with_key(iter);
     v.hash(&mut state);
     state.finish()
-}
-
-/// Trait for iterators that can skip values efficiently if the client knows they aren't needed.
-pub trait FastIterator: Iterator {
-    /// Skip the next item in the iterator, without returning it.
-    fn skip_next(&mut self);
 }
 
 /// A minimal perfect hash function over a set of objects of type `T`.
@@ -94,12 +83,24 @@ impl<T> HeapSizeOf for Mphf<T> {
 
 const MAX_ITERS: u64 = 100;
 
-#[cfg(feature = "fast-constructors")]
 impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
-    pub fn new_with_key<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
+
+
+    /// Constructs an MPHF from a (possibly lazy) iterator over iterators.
+    /// This allows construction of very large MPHFs without holding all the keys
+    /// in memory simultaneously.
+    /// `objects` is an `IntoInterator` yielding a stream of `IntoIterator`s that must not contain any duplicate items.
+    /// `objects` must be able to be iterated over multiple times and yield the same stream of items each time.
+    /// `gamma` controls the tradeoff between the construction-time and run-time speed,
+    /// and the size of the datastructure representing the hash function. See the paper for details.
+    /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
+    /// NOTE: the inner iterator `N::IntoIter` should override `nth` if there's an efficient way to skip 
+    /// over items when iterating.  This is important because later iterations of the MPHF construction algorithm
+    /// skip most of the items.
+    pub fn from_chunked_iterator<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>, N: IntoIterator<Item = T> + Send,
-        <N as IntoIterator>::IntoIter: FastIterator + ExactSizeIterator,
+        <N as IntoIterator>::IntoIter: ExactSizeIterator,
         <&'a I as IntoIterator>::IntoIter: Send, I: Sync
     {
         let mut iter = 0;
@@ -126,16 +127,22 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
             for object in objects {
                 let mut object_iter = object.into_iter();
+
+                // Note: we will use Iterator::nth() to advance the iterator if
+                // we've skipped over some items.
+                let mut object_pos = 0;
                 let len = object_iter.len();
 
                 for object_index in 0..len {
                     let index = offset + object_index;
 
                     if !done_keys.contains(index) {
-                        let key = match object_iter.next() {
+                        let key = match object_iter.nth(object_index - object_pos) {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
+
+                        object_pos = object_index + 1;
 
                         let idx = hash_with_seed(seed, &key) % size;
 
@@ -147,9 +154,6 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                             collide.insert(idx as usize);
                         }
                     }
-                    else{
-                        object_iter.skip_next();
-                    }
                 }// end-window for
 
                 offset += len;
@@ -158,16 +162,23 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
             let mut offset = 0;
             for object in objects {
                 let mut object_iter = object.into_iter();
+
+                // Note: we will use Iterator::nth() to advance the iterator if
+                // we've skipped over some items.
+                let mut object_pos = 0;
                 let len = object_iter.len();
 
                 for object_index in 0..len {
                     let index = offset + object_index;
 
                     if !done_keys.contains(index) {
-                        let key = match object_iter.next() {
+                        // This will fast-forward the iterator over unneeded items.
+                        let key = match object_iter.nth(object_index - object_pos) {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
+
+                        object_pos = object_index + 1;
 
                         let idx = hash_with_seed(seed, &key) % size;
 
@@ -176,9 +187,6 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
                         } else {
                             done_keys.insert(index as usize);
                         }
-                    }
-                    else{
-                        object_iter.skip_next();
                     }
                 } // end-window for
 
@@ -457,7 +465,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     }
 }
 
-#[cfg(feature = "fast-constructors")]
 struct Queue<'a, I: 'a, T>
 where
     &'a I: IntoIterator,
@@ -474,11 +481,10 @@ where
     phantom_t: PhantomData<T>,
 }
 
-#[cfg(feature = "fast-constructors")]
 impl<'a, I: 'a, N1, N2, T> Queue<'a, I, T>
 where
     &'a I: IntoIterator<Item=N1>,
-    N2: Iterator<Item = T> + FastIterator + ExactSizeIterator,
+    N2: Iterator<Item = T> + ExactSizeIterator,
     N1: IntoIterator<Item = T, IntoIter = N2> + Clone {
 
     fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, T>
@@ -530,17 +536,18 @@ where
     }
 }
 
-#[cfg(feature = "fast-constructors")]
 impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
-    pub fn new_parallel_with_keys<I, N>(gamma: f64, objects: &'a I,
+
+    /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
+    pub fn from_chunked_iterator_parallel<I, N>(gamma: f64, objects: &'a I,
                                         max_iters: Option<u64>,
                                         n: usize, num_threads: usize)
                                         -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>, 
         N: IntoIterator<Item = T> + Send + Clone,
-        <N as IntoIterator>::IntoIter: FastIterator + ExactSizeIterator,
+        <N as IntoIterator>::IntoIter: ExactSizeIterator,
         <&'a I as IntoIterator>::IntoIter: Send, I: Sync
     {
 
@@ -632,10 +639,14 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                 };
 
                             let mut into_node = node.into_iter();
+                            let mut node_pos = 0;
+
                             for index in 0..num_keys {
                                 let key_index = offset + index;
                                 if !done_keys.contains(key_index) {
-                                    let key = into_node.next().unwrap();
+
+                                    let key = into_node.nth(index - node_pos).unwrap();
+                                    node_pos = index + 1;
 
                                     if job_id == 0 {
                                         find_collisions(&iter, &key, &size,
@@ -649,16 +660,13 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                                           &buffered_keys_vec);
                                     }
                                 } //end-if
-                                else{
-                                    into_node.skip_next();
-                                }
                             }
 
                             done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
                         } //end-loop
                     }); //end-scope
                 } //end-threads-for
-            }); //end-crossbeam
+            }).unwrap(); //end-crossbeam
 
             let unwrapped_a = Arc::try_unwrap(a).unwrap();
             bitvecs.push(unwrapped_a);
@@ -756,6 +764,77 @@ mod tests {
         let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
     }
+
+    fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: usize) -> bool 
+    where T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send 
+    {
+        let phf = Mphf::from_chunked_iterator(1.7, &values, total);
+
+        // Hash all the elements of xs
+        let mut hashes = Vec::new();
+
+        for v in values.iter().flat_map(|x| x) {
+            hashes.push(phf.hash(&v));
+        }
+
+        hashes.sort();
+
+        // Hashes must equal 0 .. n
+        let gt: Vec<u64> = (0..total as u64).collect();
+        hashes == gt
+    }
+
+
+    fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: usize) -> bool 
+    where T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send 
+    {
+        let phf = Mphf::from_chunked_iterator_parallel(1.7, &values, None, total, 2);
+
+        // Hash all the elements of xs
+        let mut hashes = Vec::new();
+
+        for v in values.iter().flat_map(|x| x) {
+            hashes.push(phf.hash(&v));
+        }
+
+        hashes.sort();
+
+        // Hashes must equal 0 .. n
+        let gt: Vec<u64> = (0..total as u64).collect();
+        hashes == gt
+    }
+
+    quickcheck! {
+        fn check_int_slices(v: HashSet<u64>, lens: Vec<usize>) -> bool {
+
+            let mut lens = lens;
+
+            let items: Vec<u64> = v.iter().cloned().collect();
+            if lens.len() == 0 || lens.iter().all(|x| *x == 0) {
+                lens.clear();
+                lens.push(items.len())
+            }
+
+            let mut slices: Vec<Vec<u64>> = Vec::new();
+
+            let mut total = 0;
+            for slc_len in lens {
+                let end = std::cmp::min(items.len(), total + slc_len);
+                let slc = Vec::from(&items[total..end]);
+                slices.push(slc);
+                total = end;
+
+                if total == items.len() {
+                    break;
+                }
+            }
+            
+            check_chunked_mphf(slices.clone(), total) && check_chunked_mphf_parallel(slices, total)
+        }
+    }
+
+
+
 
     quickcheck! {
         fn check_string(v: HashSet<Vec<String>>) -> bool {
