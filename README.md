@@ -9,7 +9,7 @@ See [Docs](https://10xgenomics.github.io/rust-boomphf/)
 
 Example usage:
 
- ```
+ ```rust
  use boomphf::*;
 
  // sample set of obejcts
