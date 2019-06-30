@@ -7,7 +7,7 @@ homepage = "https://github.com/10XGenomics/rust-boomphf"
 license = "MIT"
 description = "Scalable and Efficient Minimal Perfect Hash Functions"   
 documentation = "https://10xgenomics.github.io/rust-boomphf/master/boomphf/index.html"
-readme = "README.md
+readme = "README.md"
 keywords = ["hashing", "minimal", "perfect"]
 
 [dependencies]
