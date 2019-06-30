@@ -223,6 +223,25 @@ impl BitVector {
         prev & mask == 0
     }
 
+    /// insert a new element synchronously.
+    /// requires &mut self, but doesn't use
+    /// atomic instructions so may be faster
+    /// than `insert()`.
+    ///
+    /// If value is inserted, return true,
+    /// if value already exists in set, return false.
+    ///
+    /// Insert, remove and contains do not do bound check.
+    #[inline]
+    pub fn insert_sync(&mut self, bit: usize) -> bool {
+        let (word, mask) = word_mask(bit);
+        let data = self.vector[word].get_mut();
+
+        let old_data = data.clone();
+        *data = *data | mask;
+        old_data & mask == 0
+    }
+
     /// remove an element from set
     ///
     /// If value is removed, return true,
@@ -330,6 +349,7 @@ fn word_offset(index: usize) -> (usize, usize) {
     (index / 64, index % 64)
 }
 
+#[inline]
 fn word_mask(index: usize) -> (usize, usize) {
     let word = index / 64;
     let mask = 1 << (index % 64);

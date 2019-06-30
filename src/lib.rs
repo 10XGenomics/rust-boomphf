@@ -34,7 +34,8 @@ extern crate fnv;
 #[cfg(feature = "heapsize")]
 extern crate heapsize;
 extern crate rayon;
-extern crate crossbeam;
+extern crate crossbeam_utils;
+extern crate wyhash;
 
 #[macro_use]
 extern crate log;
@@ -59,10 +60,46 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 #[inline]
-fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+fn fold(v: u64) -> u32 {
+    ((v & 0xFFFFFFFF) as u32) ^ ((v >> 32) as u32)
+}
+
+#[inline]
+fn hash_with_seed_slow<T: Hash>(iter: u64, v: &T) -> u64 {
     let mut state = fnv::FnvHasher::with_key(iter);
     v.hash(&mut state);
     state.finish()
+}
+
+#[inline]
+fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+  let mut state = wyhash::WyHash::with_seed(1<<iter + iter);
+  v.hash(&mut state);
+  state.finish()
+}
+
+#[inline]
+fn hash_with_seed32<T: Hash>(iter: u64, v: &T) -> u32 {
+    fold(hash_with_seed(iter, v))
+}
+
+
+#[inline]
+fn fastmod(hash: u32, n: u32) -> u64 {
+    ((hash as u64) * (n as u64) >> 32)
+}
+
+#[inline]
+fn hashmod<T: Hash>(iter: u64, v: &T, n: usize) -> u64 {
+    // when n < 2^32, use the fast alternative to modulo described here: 
+    // https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+    if n < 1<<32 { 
+        let h = hash_with_seed32(iter, v);
+        fastmod(h, n as u32) as u64
+    } else {
+        let h = hash_with_seed(iter, v);
+        h % (n as u64)
+    }
 }
 
 /// A minimal perfect hash function over a set of objects of type `T`.
@@ -119,8 +156,8 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
 
-            let a = BitVector::new(size as usize);
-            let collide = BitVector::new(size as usize);
+            let mut a = BitVector::new(size as usize);
+            let mut collide = BitVector::new(size as usize);
 
             let seed = iter;
             let mut offset = 0;
@@ -144,14 +181,14 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
                         object_pos = object_index + 1;
 
-                        let idx = hash_with_seed(seed, &key) % size;
+                        let idx = hashmod(seed, &key, size as usize);
 
                         if collide.contains(idx as usize) {
                             continue;
                         }
-                        let a_was_set = !a.insert(idx as usize);
+                        let a_was_set = !a.insert_sync(idx as usize);
                         if a_was_set {
-                            collide.insert(idx as usize);
+                            collide.insert_sync(idx as usize);
                         }
                     }
                 }// end-window for
@@ -180,7 +217,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
                         object_pos = object_index + 1;
 
-                        let idx = hash_with_seed(seed, &key) % size;
+                        let idx = hashmod(seed, &key, size as usize);
 
                         if collide.contains(idx as usize) {
                             a.remove(idx as usize);
@@ -239,27 +276,27 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
                 }
 
                 let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-                let a = BitVector::new(size as usize);
-                let collide = BitVector::new(size as usize);
+                let mut a = BitVector::new(size as usize);
+                let mut collide = BitVector::new(size as usize);
 
                 let seed = iter;
 
                 for v in keys.iter() {
-                    let idx = hash_with_seed(seed, v) % size;
+                    let idx = hashmod(seed, v, size as usize);
 
                     if collide.contains(idx as usize) {
                         continue;
                     }
 
-                    let a_was_set = !a.insert(idx as usize);
+                    let a_was_set = !a.insert_sync(idx as usize);
                     if a_was_set {
-                        collide.insert(idx as usize);
+                        collide.insert_sync(idx as usize);
                     }
                 }
 
                 let mut redo_keys_tmp = Vec::new();
                 for v in keys.iter() {
-                    let idx = hash_with_seed(seed, v) % size;
+                    let idx = hashmod(seed, v, size as usize);
 
                     if collide.contains(idx as usize) {
                         redo_keys_tmp.push(v.clone());
@@ -352,7 +389,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// in the construction set this function may panic.
     pub fn hash(&self, item: &T) -> u64 {
         for (iter, bv) in self.bitvecs.iter().enumerate() {
-            let hash = hash_with_seed(iter as u64, item) % (bv.capacity() as u64);
+            let hash = hashmod(iter as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
                 return self.get_rank(hash, iter);
@@ -367,7 +404,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// value will an arbitrary value Some(x), or None.
     pub fn try_hash(&self, item: &T) -> Option<u64> {
         for (iter, bv) in self.bitvecs.iter().enumerate() {
-            let hash = hash_with_seed(iter as u64, item) % (bv.capacity() as u64);
+            let hash = hashmod(iter as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
                 return Some(self.get_rank(hash, iter));
@@ -413,7 +450,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 
                 (&keys).par_chunks(1 << 16).for_each(|chnk| {
                     for v in chnk.iter() {
-                        let idx = hash_with_seed(seed, v) % size;
+                        let idx = hashmod(seed, v, size as usize);
                         if collide.contains(idx as usize) {
                             continue;
                         }
@@ -431,7 +468,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                         let mut redo_keys_chunk = Vec::new();
 
                         for v in chnk.iter() {
-                            let idx = hash_with_seed(seed, v) % size;
+                            let idx = hashmod(seed, v, size as usize);
 
                             if collide.contains(idx as usize) {
                                 redo_keys_chunk.push(v.clone());
@@ -566,7 +603,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
         let find_collisions = | seed: &u64, key: &T, size: &u64,
                                 collide: &Arc<BitVector>,
                                 a: &Arc<BitVector> | {
-            let idx = hash_with_seed(*seed, key) % size;
+            let idx = hashmod(*seed, key, *size as usize);
 
             if ! collide.contains(idx as usize) {
                 let a_was_set = !a.insert(idx as usize);
@@ -583,7 +620,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                   done_keys: &BitVector,
                                   buffer_keys: &Arc<AtomicBool>,
                                   buffered_keys_vec: &Arc<Mutex<Vec<T>>> | {
-            let idx = hash_with_seed(*seed, key) % size;
+            let idx = hashmod(*seed, key, *size as usize);
 
             if collide.contains(idx as usize) {
                 a.remove(idx as usize);
@@ -618,7 +655,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             let work_queue = Arc::new(Mutex::new(Queue::new(objects, n)));
             let done_keys_count = Arc::new(AtomicUsize::new(0));
 
-            crossbeam::scope(|scope| {
+            crossbeam_utils::thread::scope(|scope| {
 
                 for _ in 0 .. num_threads {
                     let buffer_keys = buffer_keys.clone();
@@ -832,9 +869,6 @@ mod tests {
             check_chunked_mphf(slices.clone(), total) && check_chunked_mphf_parallel(slices, total)
         }
     }
-
-
-
 
     quickcheck! {
         fn check_string(v: HashSet<Vec<String>>) -> bool {
