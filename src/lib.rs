@@ -103,7 +103,7 @@ fn hashmod<T: Hash>(iter: u64, v: &T, n: usize) -> u64 {
 }
 
 /// A minimal perfect hash function over a set of objects of type `T`.
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
     bitvecs: Vec<BitVector>,
