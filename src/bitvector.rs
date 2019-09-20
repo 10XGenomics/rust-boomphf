@@ -95,6 +95,15 @@ where
     deserializer.deserialize_seq(x)
 }
 
+impl core::clone::Clone for BitVector {
+    fn clone(&self) -> Self {
+        Self {
+            bits: self.bits.clone(),
+            vector: self.vector.iter().map(|x| AtomicUsize::new(x.load(Ordering::SeqCst).clone())).collect()
+        }
+    }
+}
+
 impl fmt::Display for BitVector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "["));
