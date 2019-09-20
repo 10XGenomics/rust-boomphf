@@ -99,7 +99,7 @@ impl core::clone::Clone for BitVector {
     fn clone(&self) -> Self {
         Self {
             bits: self.bits.clone(),
-            vector: self.vector.iter().map(|x| AtomicUsize::new(x.load(Ordering::Relaxed).clone())).collect()
+            vector: self.vector.iter().map(|x| AtomicUsize::new(x.load(Ordering::SeqCst).clone())).collect()
         }
     }
 }
