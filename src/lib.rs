@@ -65,6 +65,7 @@ fn fold(v: u64) -> u32 {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn hash_with_seed_slow<T: Hash>(iter: u64, v: &T) -> u64 {
     let mut state = fnv::FnvHasher::with_key(iter);
     v.hash(&mut state);
@@ -106,8 +107,8 @@ fn hashmod<T: Hash>(iter: u64, v: &T, n: usize) -> u64 {
 #[derive(Clone,Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
-    bitvecs: Vec<BitVector>,
-    ranks: Vec<Vec<u64>>,
+    bitvecs: Box<[BitVector]>,
+    ranks: Box<[Box<[u64]>]>,
     phantom: PhantomData<T>,
 }
 
@@ -239,7 +240,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
 
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
-            bitvecs: bitvecs,
+            bitvecs: bitvecs.into_boxed_slice(),
             ranks: ranks,
             phantom: PhantomData,
         };
@@ -316,7 +317,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
 
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
-            bitvecs: bitvecs,
+            bitvecs: bitvecs.into_boxed_slice(),
             ranks: ranks,
             phantom: PhantomData,
         };
@@ -339,7 +340,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
         }
     }
 
-    fn compute_ranks(bvs: &Vec<BitVector>) -> Vec<Vec<u64>> {
+    fn compute_ranks(bvs: &Vec<BitVector>) -> Box<[Box<[u64]>]> {
         let mut ranks = Vec::new();
         let mut pop = 0 as u64;
 
@@ -355,10 +356,10 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
                 pop += v.count_ones() as u64;
             }
 
-            ranks.push(rank)
+            ranks.push(rank.into_boxed_slice())
         }
 
-        ranks
+        ranks.into_boxed_slice()
     }
 
     #[inline]
@@ -388,11 +389,12 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// guarantee that `item` was in the construction set. If `item` was not present
     /// in the construction set this function may panic.
     pub fn hash(&self, item: &T) -> u64 {
-        for (iter, bv) in self.bitvecs.iter().enumerate() {
-            let hash = hashmod(iter as u64, item, bv.capacity());
+        for i in 0..self.bitvecs.len() {
+            let bv = &self.bitvecs[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
-                return self.get_rank(hash, iter);
+                return self.get_rank(hash, i);
             }
         }
 
@@ -403,11 +405,12 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// in the set of objects used to construct the hash function, the return
     /// value will an arbitrary value Some(x), or None.
     pub fn try_hash(&self, item: &T) -> Option<u64> {
-        for (iter, bv) in self.bitvecs.iter().enumerate() {
-            let hash = hashmod(iter as u64, item, bv.capacity());
+        for i in 0..self.bitvecs.len() {
+            let bv = &(self.bitvecs)[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
-                return Some(self.get_rank(hash, iter));
+                return Some(self.get_rank(hash, i));
             }
         }
 
@@ -492,7 +495,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
-            bitvecs: bitvecs,
+            bitvecs: bitvecs.into_boxed_slice(),
             ranks: ranks,
             phantom: PhantomData,
         };
@@ -716,15 +719,17 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
         if buffered_keys_vec.len() > 1 {
-            let buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
-            for bitvec in buffered_mphf.bitvecs {
-                bitvecs.push(bitvec);
-            }
+            let mut buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
+
+            for i in 0..buffered_mphf.bitvecs.len() {
+                let buff_vec = std::mem::replace(&mut buffered_mphf.bitvecs[i], BitVector::new(0));
+                bitvecs.push(buff_vec);
+            }   
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
-            bitvecs: bitvecs,
+            bitvecs: bitvecs.into_boxed_slice(),
             ranks: ranks,
             phantom: PhantomData,
         };

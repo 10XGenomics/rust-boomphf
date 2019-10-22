@@ -47,7 +47,7 @@ pub struct BitVector {
         feature = "serde",
         serde(serialize_with = "ser_atomic_vec", deserialize_with = "de_atomic_vec")
     )]
-    vector: Vec<AtomicUsize>,
+    vector: Box<[AtomicUsize]>,
 }
 
 // Custom serializer
@@ -138,7 +138,7 @@ impl BitVector {
 
         BitVector {
             bits: bits,
-            vector: v,
+            vector: v.into_boxed_slice(),
         }
     }
 
@@ -146,6 +146,7 @@ impl BitVector {
     ///
     /// If `bits % 64 > 0`, the last u64 is guaranteed not to
     /// have any extra 1 bits.
+    #[allow(dead_code)]
     pub fn ones(bits: usize) -> Self {
         let (word, offset) = word_offset(bits);
         let mut bvec = Vec::with_capacity(word + 1);
@@ -156,7 +157,7 @@ impl BitVector {
         bvec.push(to_au(usize::max_value() >> (64 - offset)));
         BitVector {
             bits: bits,
-            vector: bvec,
+            vector: bvec.into_boxed_slice(),
         }
     }
 
@@ -166,6 +167,7 @@ impl BitVector {
     /// else return false.
     ///
     /// This method is averagely faster than `self.len() > 0`.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.vector.iter().all(|x| x.load(Ordering::Relaxed) == 0)
     }
@@ -269,10 +271,12 @@ impl BitVector {
     ///
     /// If any new value is inserted, return true,
     /// else return false.
+    #[allow(dead_code)]
     pub fn insert_all(&self, all: &BitVector) -> bool {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
-        for (i, j) in self.vector.iter().zip(&all.vector) {
+        
+        for (i, j) in self.vector.iter().zip(all.vector.iter()) {
             let prev = i.fetch_or(j.load(Ordering::Relaxed), Ordering::Relaxed);
 
             if prev != i.load(Ordering::Relaxed) {
