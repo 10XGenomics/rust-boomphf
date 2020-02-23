@@ -24,8 +24,6 @@
 //! it will have a `capacity() % 64` bit memory waste.
 //!
 
-#![cfg_attr(feature = "unstable", feature(test))]
-
 #[cfg(feature = "heapsize")]
 use heapsize::HeapSizeOf;
 #[cfg(feature = "heapsize")]
@@ -35,7 +33,6 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
-#[macro_use]
 use serde;
 
 /// Bitvector
@@ -52,13 +49,13 @@ pub struct BitVector {
 
 // Custom serializer
 #[cfg(feature = "serde")]
-fn ser_atomic_vec<S>(v: &Vec<AtomicUsize>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_atomic_vec<S>(v: &Box<[AtomicUsize]>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     use serde::ser::SerializeSeq;
     let mut seq = serializer.serialize_seq(Some(v.len()))?;
-    for ref x in v {
+    for ref x in v.iter() {
         seq.serialize_element(&x.load(Ordering::SeqCst))?;
     }
     seq.end()
@@ -66,14 +63,14 @@ where
 
 // Custom deserializer
 #[cfg(feature = "serde")]
-pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Vec<AtomicUsize>, D::Error>
+pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Box<[AtomicUsize]>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     struct AtomicUsizeSeqVisitor;
 
     impl<'de> serde::de::Visitor<'de> for AtomicUsizeSeqVisitor {
-        type Value = Vec<AtomicUsize>;
+        type Value = Box<[AtomicUsize]>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a 64bit unsigned integer")
@@ -88,7 +85,7 @@ where
             while let Some(x) = access.next_element()? {
                 vec.push(AtomicUsize::new(x));
             }
-            Ok(vec)
+            Ok(vec.into_boxed_slice())
         }
     }
     let x = AtomicUsizeSeqVisitor;
@@ -106,14 +103,15 @@ impl core::clone::Clone for BitVector {
 
 impl fmt::Display for BitVector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "["));
-        try!(write!(
+        write!(f, "[")?;
+        write!(
             f,
             "{}",
             self.iter()
                 .fold(String::new(), |x0, x| x0 + &format!("{}, ", x))
-        ));
-        write!(f, "]")
+        )?;
+        write!(f, "]")?;
+        Ok(())
     }
 }
 
@@ -314,7 +312,7 @@ impl BitVector {
 #[cfg(feature = "heapsize")]
 impl HeapSizeOf for BitVector {
     fn heap_size_of_children(&self) -> usize {
-        self.vector.capacity() * mem::size_of::<AtomicUsize>()
+        self.vector.len() * mem::size_of::<AtomicUsize>()
     }
 }
 
