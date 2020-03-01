@@ -108,7 +108,7 @@ fn hashmod<T: Hash>(iter: u64, v: &T, n: usize) -> u64 {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
     bitvecs: Box<[BitVector]>,
-    ranks: Box<[Box<[u64]>]>,
+    ranks: *const Box<[u64]>,
     phantom: PhantomData<T>,
 }
 
@@ -116,6 +116,14 @@ pub struct Mphf<T> {
 impl<T> HeapSizeOf for Mphf<T> {
     fn heap_size_of_children(&self) -> usize {
         self.bitvecs.heap_size_of_children() + self.ranks.heap_size_of_children()
+    }
+}
+
+impl<T> Drop for Mphf<T> {
+    fn drop(&mut self) {
+        unsafe {
+            Box::from_raw(std::slice::from_raw_parts_mut(self.ranks as *mut Box<[u64]>, self.bitvecs.len()));
+        }
     }
 }
 
@@ -239,9 +247,10 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
+        debug_assert!(ranks.len() == bitvecs.len());
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks: Box::into_raw(ranks) as *const Box<[u64]>,
             phantom: PhantomData,
         };
 
@@ -316,9 +325,10 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
+        debug_assert!(ranks.len() == bitvecs.len());
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks: Box::into_raw(ranks) as *const Box<[u64]>,
             phantom: PhantomData,
         };
 
@@ -366,7 +376,10 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     fn get_rank(&self, hash: u64, i: usize) -> u64 {
         let idx = hash as usize;
         let bv = self.bitvecs.get(i).expect("that level doesn't exist");
-        let ranks = self.ranks.get(i).expect("that level doesn't exist");
+        
+        assert!(i <= isize::max_value() as usize);
+        // Here you need no check while self.ranks.len() == self.bitvecs.len()
+        let ranks = &unsafe { &*self.ranks.add(i) };
 
         // Last pre-computed rank
         let mut rank = ranks[idx / 512];
@@ -494,9 +507,10 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
+        debug_assert!(ranks.len() == bitvecs.len());
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks: Box::into_raw(ranks) as *const Box<[u64]>,
             phantom: PhantomData,
         };
 
@@ -728,9 +742,10 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
+        debug_assert!(ranks.len() == bitvecs.len());
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks: Box::into_raw(ranks) as *const Box<[u64]>,
             phantom: PhantomData,
         };
 
