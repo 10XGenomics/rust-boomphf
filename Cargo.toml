@@ -1,6 +1,6 @@
 [package]
 name = "boomphf"
-version = "0.5.2"
+version = "0.5.3"
 authors = ["Patrick Marks <pmarks@gmail.com>"]
 repository = "https://github.com/10XGenomics/rust-boomphf"
 homepage = "https://github.com/10XGenomics/rust-boomphf"
@@ -9,23 +9,18 @@ description = "Scalable and Efficient Minimal Perfect Hash Functions"
 documentation = "https://10xgenomics.github.io/rust-boomphf/master/boomphf/index.html"
 readme = "README.md"
 keywords = ["hashing", "minimal", "perfect"]
+edition = "2018"
 
 [dependencies]
-fnv = ">=1.0"
 serde = { version=">=1.0", optional = true, features=["derive"] }
 rayon = ">=1.0"
-crossbeam-utils = "0.6.5"
+crossbeam-utils = "0.7.2"
 wyhash = "0.3.0"
 log = "0.4.*"
 
 [dev-dependencies]
-quickcheck = "0.3"
+quickcheck = "0.9"
 bencher = ">=0.1"
-
-[dependencies.heapsize]
-optional = true
-version = ">=0.4.2"
-default-features = false
 
 [[bench]]
 name = "build"

@@ -29,29 +29,13 @@
 //!	assert!(hashes == expected_hashes)
 //! ```
 
-extern crate fnv;
-
-#[cfg(feature = "heapsize")]
-extern crate heapsize;
-extern crate rayon;
-extern crate crossbeam_utils;
-extern crate wyhash;
-
-#[macro_use]
-extern crate log;
-
-#[cfg(feature = "serde")]
-#[macro_use]
-extern crate serde;
-
-#[cfg(feature = "heapsize")]
-use heapsize::HeapSizeOf;
 use rayon::prelude::*;
 
 pub mod hashmap;
 mod bitvector;
 use bitvector::*;
 
+use log::error;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -62,14 +46,6 @@ use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 #[inline]
 fn fold(v: u64) -> u32 {
     ((v & 0xFFFFFFFF) as u32) ^ ((v >> 32) as u32)
-}
-
-#[inline]
-#[allow(dead_code)]
-fn hash_with_seed_slow<T: Hash>(iter: u64, v: &T) -> u64 {
-    let mut state = fnv::FnvHasher::with_key(iter);
-    v.hash(&mut state);
-    state.finish()
 }
 
 #[inline]
@@ -87,7 +63,7 @@ fn hash_with_seed32<T: Hash>(iter: u64, v: &T) -> u32 {
 
 #[inline]
 fn fastmod(hash: u32, n: u32) -> u64 {
-    ((hash as u64) * (n as u64) >> 32)
+    (hash as u64) * (n as u64) >> 32
 }
 
 #[inline]
@@ -110,13 +86,6 @@ pub struct Mphf<T> {
     bitvecs: Box<[BitVector]>,
     ranks: Box<[Box<[u64]>]>,
     phantom: PhantomData<T>,
-}
-
-#[cfg(feature = "heapsize")]
-impl<T> HeapSizeOf for Mphf<T> {
-    fn heap_size_of_children(&self) -> usize {
-        self.bitvecs.heap_size_of_children() + self.ranks.heap_size_of_children()
-    }
 }
 
 const MAX_ITERS: u64 = 100;
@@ -245,7 +214,6 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
             phantom: PhantomData,
         };
 
-        r.log_heap_size(n);
         r
     }
 }
@@ -257,7 +225,6 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
     pub fn new(gamma: f64, objects: &Vec<T>) -> Mphf<T> {
-        let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
         let mut redo_keys = Vec::new();
@@ -322,22 +289,7 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
             phantom: PhantomData,
         };
 
-        r.log_heap_size(n);
         r
-    }
-
-    
-    fn log_heap_size(&self, _items: usize) {
-        #[cfg(feature = "heapsize")]
-        {
-            let sz = self.heap_size_of_children();
-            info!(
-                "\nItems: {}, Mphf Size: {}, Bits/Item: {}",
-                _items,
-                sz,
-                (sz * 8) as f32 / _items as f32
-            );
-        }
     }
 
     fn compute_ranks(bvs: &Vec<BitVector>) -> Box<[Box<[u64]>]> {
@@ -423,7 +375,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Configure the number of threads on that threadpool to control CPU usage.
     pub fn new_parallel(gamma: f64, objects: &Vec<T>,
                         starting_seed: Option<u64>) -> Mphf<T> {
-        let n = objects.len();
         let mut bitvecs = Vec::new();
         let mut iter = 0;
         let mut redo_keys = Vec::new();
@@ -500,7 +451,6 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
             phantom: PhantomData,
         };
 
-        r.log_heap_size(n);
         r
     }
 }
@@ -734,7 +684,6 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             phantom: PhantomData,
         };
 
-        r.log_heap_size(n);
         r
     }
 }
@@ -909,29 +858,5 @@ mod tests {
     fn from_ints_serial() {
         let items = (0..1000000).map(|x| x * 2);
         assert!(check_mphf(HashSet::from_iter(items)));
-    }
-
-    #[cfg(feature = "heapsize")]
-    mod heap_size {
-        use heapsize::HeapSizeOf;
-        use super::*;
-
-        #[test]
-        fn test_heap_size_vec() {
-            let mut vs = Vec::new();
-            for _ in 0..100 {
-                let vn = vec![123usize; 100];
-                vs.push(vn);
-            }
-            println!("heap_size: {}", vs.heap_size_of_children());
-            assert!(vs.heap_size_of_children() > 80000);
-        }
-
-        #[test]
-        fn test_heap_size_bv() {
-            let bv = BitVector::new(100000);
-            println!("heap_size: {}", bv.heap_size_of_children());
-            assert!(bv.heap_size_of_children() > 100000 / 64);
-        }
     }
 }

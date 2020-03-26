@@ -24,11 +24,6 @@
 //! it will have a `capacity() % 64` bit memory waste.
 //!
 
-#[cfg(feature = "heapsize")]
-use heapsize::HeapSizeOf;
-#[cfg(feature = "heapsize")]
-use std::mem;
-
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -306,13 +301,6 @@ impl BitVector {
             idx: 0,
             size: self.bits,
         }
-    }
-}
-
-#[cfg(feature = "heapsize")]
-impl HeapSizeOf for BitVector {
-    fn heap_size_of_children(&self) -> usize {
-        self.vector.len() * mem::size_of::<AtomicUsize>()
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::hash::Hash;
 use std::fmt::Debug;
-use Mphf;
+use crate::Mphf;
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
