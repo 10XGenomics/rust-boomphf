@@ -28,7 +28,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
-use serde;
+use serde::{self, Serialize, Deserialize};
 
 /// Bitvector
 #[derive(Debug)]

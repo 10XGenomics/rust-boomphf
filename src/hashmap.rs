@@ -1,5 +1,8 @@
 //! HashMap data structures, using MPHFs to encode the position of each key in a dense array.
 
+#[cfg(feature = "serde")]
+use serde::{self, Serialize, Deserialize};
+
 use std::hash::Hash;
 use std::fmt::Debug;
 use crate::Mphf;

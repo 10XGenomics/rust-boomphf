@@ -43,6 +43,9 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
+#[cfg(feature = "serde")]
+use serde::{self, Serialize, Deserialize};
+
 #[inline]
 fn fold(v: u64) -> u32 {
     ((v & 0xFFFFFFFF) as u32) ^ ((v >> 32) as u32)
