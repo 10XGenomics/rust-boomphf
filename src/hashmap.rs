@@ -1,11 +1,11 @@
 //! HashMap data structures, using MPHFs to encode the position of each key in a dense array.
 
 #[cfg(feature = "serde")]
-use serde::{self, Serialize, Deserialize};
+use serde::{self, Deserialize, Serialize};
 
-use std::hash::Hash;
-use std::fmt::Debug;
 use crate::Mphf;
+use std::fmt::Debug;
+use std::hash::Hash;
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
@@ -38,7 +38,7 @@ where
             mphf: mphf,
             keys: keys,
             values: data,
-        } 
+        }
     }
 
     /// Create a new hash map from the parallel array `keys` and `values`
@@ -146,9 +146,6 @@ impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
     }
 }
 
-
-
-
 /// A HashMap data structure where the mapping between keys and 2 values is encoded in a Mphf. You should usually use `BoomHashMap` with a tuple/struct value type.
 /// If the layout overhead of the struct / tuple must be avoided, this variant of is an alternative.
 /// This lets us store the keys and values in dense
@@ -203,7 +200,12 @@ where
     D1: Debug,
     D2: Debug,
 {
-    fn create_map(mut keys: Vec<K>, mut data: Vec<D1>, mut aux_data: Vec<D2>, mphf: Mphf<K>) -> BoomHashMap2<K, D1, D2> {
+    fn create_map(
+        mut keys: Vec<K>,
+        mut data: Vec<D1>,
+        mut aux_data: Vec<D2>,
+        mphf: Mphf<K>,
+    ) -> BoomHashMap2<K, D1, D2> {
         // reorder the keys and values according to the Mphf
         for i in 0..keys.len() {
             loop {
@@ -226,11 +228,7 @@ where
     }
 
     /// Create a new hash map from the parallel arrays `keys` and `values`, and `aux_values`
-    pub fn new(
-        keys: Vec<K>,
-        values: Vec<D1>,
-        aux_values: Vec<D2>,
-    ) -> BoomHashMap2<K, D1, D2> {
+    pub fn new(keys: Vec<K>, values: Vec<D1>, aux_values: Vec<D2>) -> BoomHashMap2<K, D1, D2> {
         let mphf = Mphf::new(1.7, &keys);
         Self::create_map(keys, values, aux_values, mphf)
     }
@@ -294,16 +292,11 @@ where
     D2: Debug,
 {
     /// Create a new hash map from the parallel arrays `keys` and `values`, and `aux_values`, using a parallel algorithm to construct the Mphf.
-    pub fn new_parallel(
-        keys: Vec<K>,
-        data: Vec<D1>,
-        aux_data: Vec<D2>,
-    ) -> BoomHashMap2<K, D1, D2> {
+    pub fn new_parallel(keys: Vec<K>, data: Vec<D1>, aux_data: Vec<D2>) -> BoomHashMap2<K, D1, D2> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         Self::create_map(keys, data, aux_data, mphf)
     }
 }
-
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
 /// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.
@@ -319,10 +312,7 @@ where
     K: Clone + Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
 {
-    pub fn new_parallel(
-        mut keys: Vec<K>,
-        mut data: Vec<D1>,
-    ) -> NoKeyBoomHashMap<K, D1> {
+    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         for i in 0..keys.len() {
             loop {
@@ -341,10 +331,7 @@ where
         }
     }
 
-    pub fn new_with_mphf(
-        mphf: Mphf<K>,
-        data: Vec<D1>,
-    ) -> NoKeyBoomHashMap<K, D1> {
+    pub fn new_with_mphf(mphf: Mphf<K>, data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
         NoKeyBoomHashMap {
             mphf: mphf,
             values: data,
@@ -360,7 +347,6 @@ where
         }
     }
 }
-
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
 /// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.

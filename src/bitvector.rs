@@ -28,7 +28,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
-use serde::{self, Serialize, Deserialize};
+use serde::{self, Deserialize, Serialize};
 
 /// Bitvector
 #[derive(Debug)]
@@ -91,7 +91,11 @@ impl core::clone::Clone for BitVector {
     fn clone(&self) -> Self {
         Self {
             bits: self.bits.clone(),
-            vector: self.vector.iter().map(|x| AtomicUsize::new(x.load(Ordering::SeqCst).clone())).collect()
+            vector: self
+                .vector
+                .iter()
+                .map(|x| AtomicUsize::new(x.load(Ordering::SeqCst).clone()))
+                .collect(),
         }
     }
 }
@@ -268,7 +272,7 @@ impl BitVector {
     pub fn insert_all(&self, all: &BitVector) -> bool {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
-        
+
         for (i, j) in self.vector.iter().zip(all.vector.iter()) {
             let prev = i.fetch_or(j.load(Ordering::Relaxed), Ordering::Relaxed);
 
