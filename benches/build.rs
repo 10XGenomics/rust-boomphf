@@ -23,7 +23,6 @@ fn build1_par(bench: &mut Bencher) {
 }
 
 fn scan1_ser(bench: &mut Bencher) {
-
     let items: Vec<u64> = (0..1000000u64).map(|x| x * 2).collect();
     let phf = Mphf::new(2.0, &items);
 
@@ -33,8 +32,6 @@ fn scan1_ser(bench: &mut Bencher) {
         }
     });
 }
-
-
 
 benchmark_group!(benches, build1_ser, build1_par, scan1_ser);
 benchmark_main!(benches);
