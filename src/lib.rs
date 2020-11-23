@@ -33,6 +33,7 @@ use rayon::prelude::*;
 
 mod bitvector;
 pub mod hashmap;
+mod par_iter;
 use bitvector::*;
 
 use log::error;

@@ -14,8 +14,8 @@ use std::iter::ExactSizeIterator;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap<K: Hash, D> {
     mphf: Mphf<K>,
-    keys: Vec<K>,
-    values: Vec<D>,
+    pub(crate) keys: Vec<K>,
+    pub(crate) values: Vec<D>,
 }
 
 impl<K, D> BoomHashMap<K, D>
