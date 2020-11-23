@@ -6,6 +6,7 @@ use serde::{self, Deserialize, Serialize};
 use crate::Mphf;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::iter::ExactSizeIterator;
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
@@ -139,6 +140,8 @@ impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
     }
 }
 
+impl<'a, K: Hash, D1> ExactSizeIterator for BoomIterator<'a, K, D1> {}
+
 impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
     type Item = (&'a K, &'a D);
     type IntoIter = BoomIterator<'a, K, D>;
@@ -191,6 +194,8 @@ impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
         (remaining, Some(remaining))
     }
 }
+
+impl<'a, K: Hash, D1, D2> ExactSizeIterator for Boom2Iterator<'a, K, D1, D2> {}
 
 impl<'a, K: Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
     type Item = (&'a K, &'a D1, &'a D2);
