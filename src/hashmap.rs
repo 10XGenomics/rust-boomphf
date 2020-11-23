@@ -132,6 +132,11 @@ impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
 
         elements
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.hash.keys.len() - self.index;
+        (remaining, Some(remaining))
+    }
 }
 
 impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
@@ -179,6 +184,11 @@ impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
         ));
         self.index += 1;
         elements
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.hash.keys.len() - self.index;
+        (remaining, Some(remaining))
     }
 }
 
