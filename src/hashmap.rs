@@ -4,6 +4,7 @@
 use serde::{self, Deserialize, Serialize};
 
 use crate::Mphf;
+use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::iter::ExactSizeIterator;
@@ -23,7 +24,7 @@ where
     K: Clone + Hash + Debug + PartialEq,
     D: Debug,
 {
-    fn create_map(mut keys: Vec<K>, mut data: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
+    fn create_map(mut keys: Vec<K>, mut values: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
         // reorder the keys and values according to the Mphf
         for i in 0..keys.len() {
             loop {
@@ -32,14 +33,10 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
             }
         }
-        BoomHashMap {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-        }
+        BoomHashMap { mphf, keys, values }
     }
 
     /// Create a new hash map from the parallel array `keys` and `values`
@@ -49,12 +46,16 @@ where
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<&D> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(&self.values[pos as usize])
                 } else {
                     None
@@ -65,12 +66,16 @@ where
     }
 
     /// Get the position in the Mphf of a key, if the key exists.
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(pos as usize)
                 } else {
                     None
@@ -217,8 +222,8 @@ where
 {
     fn create_map(
         mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
+        mut values: Vec<D1>,
+        mut aux_values: Vec<D2>,
         mphf: Mphf<K>,
     ) -> BoomHashMap2<K, D1, D2> {
         // reorder the keys and values according to the Mphf
@@ -229,16 +234,16 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
+                aux_values.swap(i, kmer_slot);
             }
         }
 
         BoomHashMap2 {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            keys,
+            values,
+            aux_values,
         }
     }
 
@@ -248,12 +253,16 @@ where
         Self::create_map(keys, values, aux_values, mphf)
     }
 
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
                 } else {
                     None
@@ -263,12 +272,16 @@ where
         }
     }
 
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(pos as usize)
                 } else {
                     None
@@ -327,7 +340,7 @@ where
     K: Clone + Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
 {
-    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+    pub fn new_parallel(mut keys: Vec<K>, mut values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         for i in 0..keys.len() {
             loop {
@@ -336,25 +349,23 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
             }
         }
 
-        NoKeyBoomHashMap {
-            mphf: mphf,
-            values: data,
-        }
+        NoKeyBoomHashMap { mphf, values }
     }
 
-    pub fn new_with_mphf(mphf: Mphf<K>, data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
-        NoKeyBoomHashMap {
-            mphf: mphf,
-            values: data,
-        }
+    pub fn new_with_mphf(mphf: Mphf<K>, values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+        NoKeyBoomHashMap { mphf, values }
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<&D1> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D1>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => Some(&self.values[pos as usize]),
@@ -381,8 +392,8 @@ where
 {
     pub fn new_parallel(
         mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
+        mut values: Vec<D1>,
+        mut aux_values: Vec<D2>,
     ) -> NoKeyBoomHashMap2<K, D1, D2> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         for i in 0..keys.len() {
@@ -392,31 +403,35 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
+                aux_values.swap(i, kmer_slot);
             }
         }
         NoKeyBoomHashMap2 {
-            mphf: mphf,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            values,
+            aux_values,
         }
     }
 
     pub fn new_with_mphf(
         mphf: Mphf<K>,
-        data: Vec<D1>,
-        aux_data: Vec<D2>,
+        values: Vec<D1>,
+        aux_values: Vec<D2>,
     ) -> NoKeyBoomHashMap2<K, D1, D2> {
         NoKeyBoomHashMap2 {
-            mphf: mphf,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            values,
+            aux_values,
         }
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => Some((&self.values[pos as usize], &self.aux_values[pos as usize])),

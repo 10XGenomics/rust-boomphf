@@ -37,6 +37,7 @@ mod par_iter;
 use bitvector::*;
 
 use log::error;
+use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -53,14 +54,14 @@ fn fold(v: u64) -> u32 {
 }
 
 #[inline]
-fn hash_with_seed<T: Hash>(iter: u64, v: &T) -> u64 {
+fn hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
     let mut state = wyhash::WyHash::with_seed(1 << iter + iter);
     v.hash(&mut state);
     state.finish()
 }
 
 #[inline]
-fn hash_with_seed32<T: Hash>(iter: u64, v: &T) -> u32 {
+fn hash_with_seed32<T: Hash + ?Sized>(iter: u64, v: &T) -> u32 {
     fold(hash_with_seed(iter, v))
 }
 
@@ -70,7 +71,7 @@ fn fastmod(hash: u32, n: u32) -> u64 {
 }
 
 #[inline]
-fn hashmod<T: Hash>(iter: u64, v: &T, n: usize) -> u64 {
+fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: usize) -> u64 {
     // when n < 2^32, use the fast alternative to modulo described here:
     // https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
     if n < 1 << 32 {
@@ -213,7 +214,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
         };
 
@@ -221,7 +222,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     }
 }
 
-impl<T: Hash + Clone + Debug> Mphf<T> {
+impl<T: Clone + Hash + Debug> Mphf<T> {
     /// Generate a minimal perfect hash function for the set of `objects`.
     /// `objects` must not contain any duplicate items.
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
@@ -359,7 +360,11 @@ impl<T: Hash + Clone + Debug> Mphf<T> {
     /// Compute the hash value of `item`. If `item` was not present
     /// in the set of objects used to construct the hash function, the return
     /// value will an arbitrary value Some(x), or None.
-    pub fn try_hash(&self, item: &T) -> Option<u64> {
+    pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
+    where
+        T: Borrow<Q>,
+        Q: ?Sized + Hash,
+    {
         for i in 0..self.bitvecs.len() {
             let bv = &(self.bitvecs)[i];
             let hash = hashmod(i as u64, item, bv.capacity());
@@ -447,13 +452,11 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 }
 
@@ -479,12 +482,12 @@ where
     N2: Iterator<Item = T> + ExactSizeIterator,
     N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
 {
-    fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, T> {
+    fn new(keys_object: &'a I, num_keys: usize) -> Queue<'a, I, T> {
         Queue {
-            keys_object: object,
-            queue: object.into_iter(),
+            keys_object,
+            queue: keys_object.into_iter(),
 
-            num_keys: num_keys,
+            num_keys,
             last_key_index: 0,
 
             job_id: 0,
@@ -681,13 +684,11 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 }
 

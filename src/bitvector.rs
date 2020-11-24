@@ -134,7 +134,7 @@ impl BitVector {
         }
 
         BitVector {
-            bits: bits,
+            bits,
             vector: v.into_boxed_slice(),
         }
     }
@@ -153,7 +153,7 @@ impl BitVector {
 
         bvec.push(to_au(usize::max_value() >> (64 - offset)));
         BitVector {
-            bits: bits,
+            bits,
             vector: bvec.into_boxed_slice(),
         }
     }
