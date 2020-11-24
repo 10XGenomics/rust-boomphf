@@ -24,7 +24,7 @@ where
     K: Clone + Hash + Debug + PartialEq,
     D: Debug,
 {
-    fn create_map(mut keys: Vec<K>, mut data: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
+    fn create_map(mut keys: Vec<K>, mut values: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
         // reorder the keys and values according to the Mphf
         for i in 0..keys.len() {
             loop {
@@ -33,14 +33,10 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
             }
         }
-        BoomHashMap {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-        }
+        BoomHashMap { mphf, keys, values }
     }
 
     /// Create a new hash map from the parallel array `keys` and `values`
@@ -226,8 +222,8 @@ where
 {
     fn create_map(
         mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
+        mut values: Vec<D1>,
+        mut aux_values: Vec<D2>,
         mphf: Mphf<K>,
     ) -> BoomHashMap2<K, D1, D2> {
         // reorder the keys and values according to the Mphf
@@ -238,16 +234,16 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
+                aux_values.swap(i, kmer_slot);
             }
         }
 
         BoomHashMap2 {
-            mphf: mphf,
-            keys: keys,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            keys,
+            values,
+            aux_values,
         }
     }
 
@@ -344,7 +340,7 @@ where
     K: Clone + Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
 {
-    pub fn new_parallel(mut keys: Vec<K>, mut data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+    pub fn new_parallel(mut keys: Vec<K>, mut values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         for i in 0..keys.len() {
             loop {
@@ -353,21 +349,15 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
             }
         }
 
-        NoKeyBoomHashMap {
-            mphf: mphf,
-            values: data,
-        }
+        NoKeyBoomHashMap { mphf, values }
     }
 
-    pub fn new_with_mphf(mphf: Mphf<K>, data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
-        NoKeyBoomHashMap {
-            mphf: mphf,
-            values: data,
-        }
+    pub fn new_with_mphf(mphf: Mphf<K>, values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+        NoKeyBoomHashMap { mphf, values }
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
@@ -402,8 +392,8 @@ where
 {
     pub fn new_parallel(
         mut keys: Vec<K>,
-        mut data: Vec<D1>,
-        mut aux_data: Vec<D2>,
+        mut values: Vec<D1>,
+        mut aux_values: Vec<D2>,
     ) -> NoKeyBoomHashMap2<K, D1, D2> {
         let mphf = Mphf::new_parallel(1.7, &keys, None);
         for i in 0..keys.len() {
@@ -413,26 +403,26 @@ where
                     break;
                 }
                 keys.swap(i, kmer_slot);
-                data.swap(i, kmer_slot);
-                aux_data.swap(i, kmer_slot);
+                values.swap(i, kmer_slot);
+                aux_values.swap(i, kmer_slot);
             }
         }
         NoKeyBoomHashMap2 {
-            mphf: mphf,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            values,
+            aux_values,
         }
     }
 
     pub fn new_with_mphf(
         mphf: Mphf<K>,
-        data: Vec<D1>,
-        aux_data: Vec<D2>,
+        values: Vec<D1>,
+        aux_values: Vec<D2>,
     ) -> NoKeyBoomHashMap2<K, D1, D2> {
         NoKeyBoomHashMap2 {
-            mphf: mphf,
-            values: data,
-            aux_values: aux_data,
+            mphf,
+            values,
+            aux_values,
         }
     }
 

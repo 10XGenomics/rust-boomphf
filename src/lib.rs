@@ -214,7 +214,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         let ranks = Self::compute_ranks(&bitvecs);
         let r = Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
         };
 
@@ -452,13 +452,11 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 }
 
@@ -484,12 +482,12 @@ where
     N2: Iterator<Item = T> + ExactSizeIterator,
     N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
 {
-    fn new(object: &'a I, num_keys: usize) -> Queue<'a, I, T> {
+    fn new(keys_object: &'a I, num_keys: usize) -> Queue<'a, I, T> {
         Queue {
-            keys_object: object,
-            queue: object.into_iter(),
+            keys_object,
+            queue: keys_object.into_iter(),
 
-            num_keys: num_keys,
+            num_keys,
             last_key_index: 0,
 
             job_id: 0,
@@ -686,13 +684,11 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 }
 
