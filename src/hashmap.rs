@@ -4,6 +4,7 @@
 use serde::{self, Deserialize, Serialize};
 
 use crate::Mphf;
+use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::iter::ExactSizeIterator;
@@ -49,12 +50,16 @@ where
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<&D> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(&self.values[pos as usize])
                 } else {
                     None
@@ -65,12 +70,16 @@ where
     }
 
     /// Get the position in the Mphf of a key, if the key exists.
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(pos as usize)
                 } else {
                     None
@@ -248,12 +257,16 @@ where
         Self::create_map(keys, values, aux_values, mphf)
     }
 
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some((&self.values[pos as usize], &self.aux_values[pos as usize]))
                 } else {
                     None
@@ -263,12 +276,16 @@ where
         }
     }
 
-    pub fn get_key_id(&self, kmer: &K) -> Option<usize> {
+    pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(&kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if *kmer == hashed_kmer.clone() {
+                if kmer == hashed_kmer.borrow() {
                     Some(pos as usize)
                 } else {
                     None
@@ -354,7 +371,11 @@ where
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<&D1> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D1>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => Some(&self.values[pos as usize]),
@@ -416,7 +437,11 @@ where
     }
 
     /// Get the value associated with `key`, if available, otherwise return None
-    pub fn get(&self, kmer: &K) -> Option<(&D1, &D2)> {
+    pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => Some((&self.values[pos as usize], &self.aux_values[pos as usize])),
