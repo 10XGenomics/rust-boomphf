@@ -485,7 +485,7 @@ where
         }
     }
 
-    fn next(&mut self, done_keys_count: &Arc<AtomicUsize>) -> Option<(N2, u8, usize, usize)> {
+    fn next(&mut self, done_keys_count: &AtomicUsize) -> Option<(N2, u8, usize, usize)> {
         if self.last_key_index == self.num_keys {
             loop {
                 let done_count = done_keys_count.load(Ordering::SeqCst);
@@ -544,13 +544,13 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
         assert!(gamma > 1.01);
 
         let find_collisions =
-            |seed: &u64, key: &T, size: &u64, collide: &Arc<BitVector>, a: &Arc<BitVector>| {
+            |seed: &u64, key: &T, size: &u64, cx: &IterContext<'_, I, _, _, T>| {
                 let idx = hashmod(*seed, key, *size as usize);
 
-                if !collide.contains(idx as usize) {
-                    let a_was_set = !a.insert(idx as usize);
+                if !cx.collide.contains(idx as usize) {
+                    let a_was_set = !cx.a.insert(idx as usize);
                     if a_was_set {
-                        collide.insert(idx as usize);
+                        cx.collide.insert(idx as usize);
                     }
                 }
             };
@@ -559,13 +559,12 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                  key: &T,
                                  size: &u64,
                                  keys_index: usize,
-                                 collide: &Arc<BitVector>,
-                                 a: &Arc<BitVector>,
+                                 cx: &IterContext<'_, I, _, _, T>,
                                  global: &Arc<GlobalContext<T>>| {
             let idx = hashmod(*seed, key, *size as usize);
 
-            if collide.contains(idx as usize) {
-                a.remove(idx as usize);
+            if cx.collide.contains(idx as usize) {
+                cx.a.remove(idx as usize);
                 if global.buffer_keys.load(Ordering::SeqCst) {
                     global.buffered_keys.lock().unwrap().push(key.clone());
                 }
@@ -598,24 +597,22 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             }
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
-            let a = Arc::new(BitVector::new(size as usize));
-            let collide = Arc::new(BitVector::new(size as usize));
-
-            let work_queue = Arc::new(Mutex::new(Queue::new(objects, n)));
-            let done_keys_count = Arc::new(AtomicUsize::new(0));
+            let cx = Arc::new(IterContext {
+                done_keys_count: AtomicUsize::new(0),
+                work_queue: Mutex::new(Queue::new(objects, n)),
+                collide: BitVector::new(size as usize),
+                a: BitVector::new(size as usize),
+            });
 
             crossbeam_utils::thread::scope(|scope| {
                 for _ in 0..num_threads {
                     let global = global.clone();
-                    let done_keys_count = done_keys_count.clone();
-                    let work_queue = work_queue.clone();
-                    let collide = collide.clone();
-                    let a = a.clone();
+                    let cx = cx.clone();
 
                     scope.spawn(move |_| {
                         loop {
                             let (mut node, job_id, offset, num_keys) =
-                                match work_queue.lock().unwrap().next(&done_keys_count) {
+                                match cx.work_queue.lock().unwrap().next(&cx.done_keys_count) {
                                     None => break,
                                     Some(val) => val,
                                 };
@@ -628,24 +625,26 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                     node_pos = index + 1;
 
                                     if job_id == 0 {
-                                        find_collisions(&iter, &key, &size, &collide, &a);
+                                        find_collisions(&iter, &key, &size, &cx);
                                     } else {
                                         remove_collisions(
-                                            &iter, &key, &size, key_index, &collide, &a, &global,
+                                            &iter, &key, &size, key_index, &cx, &global,
                                         );
                                     }
                                 } //end-if
                             }
 
-                            done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
+                            cx.done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
                         } //end-loop
                     }); //end-scope
                 } //end-threads-for
             })
             .unwrap(); //end-crossbeam
 
-            let unwrapped_a = Arc::try_unwrap(a).unwrap();
-            bitvecs.push(unwrapped_a);
+            match Arc::try_unwrap(cx) {
+                Ok(cx) => bitvecs.push(cx.a),
+                Err(_) => unreachable!(),
+            }
 
             iter += 1;
             if global.buffer_keys.load(Ordering::SeqCst) {
@@ -670,6 +669,18 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             phantom: PhantomData,
         }
     }
+}
+
+struct IterContext<'a, I: 'a, N1, N2, T>
+where
+    &'a I: IntoIterator<Item = N1>,
+    N2: Iterator<Item = T> + ExactSizeIterator,
+    N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
+{
+    done_keys_count: AtomicUsize,
+    work_queue: Mutex<Queue<'a, I, T>>,
+    collide: BitVector,
+    a: BitVector,
 }
 
 struct GlobalContext<T> {
