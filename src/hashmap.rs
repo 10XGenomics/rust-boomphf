@@ -90,6 +90,10 @@ where
         self.keys.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
     pub fn get_key(&self, id: usize) -> Option<&K> {
         let max_key_id = self.len();
         if id > max_key_id {
@@ -293,6 +297,10 @@ where
 
     pub fn len(&self) -> usize {
         self.keys.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
     }
 
     // Return iterator over key-values pairs
