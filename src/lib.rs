@@ -405,35 +405,28 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                     Some(seed) => iter + seed,
                 };
 
-                (&keys).par_chunks(1 << 16).for_each(|chnk| {
-                    for v in chnk.iter() {
-                        let idx = hashmod(seed, v, size as usize);
-                        if collide.contains(idx as usize) {
-                            continue;
-                        }
+                (&keys).into_par_iter().for_each(|v| {
+                    let idx = hashmod(seed, v, size as usize);
+                    if collide.contains(idx as usize) {
+                        return;
+                    }
 
-                        let a_was_set = !a.insert(idx as usize);
-                        if a_was_set {
-                            collide.insert(idx as usize);
-                        }
+                    let a_was_set = !a.insert(idx as usize);
+                    if a_was_set {
+                        collide.insert(idx as usize);
                     }
                 });
 
-                let redo_keys_tmp: Vec<T> = (&keys)
-                    .par_chunks(1 << 16)
-                    .flat_map(|chnk| {
-                        let mut redo_keys_chunk = Vec::new();
-
-                        for v in chnk.iter() {
-                            let idx = hashmod(seed, v, size as usize);
-
-                            if collide.contains(idx as usize) {
-                                redo_keys_chunk.push(v.clone());
-                                a.remove(idx as usize);
-                            }
+                let redo_keys_tmp = (&keys)
+                    .into_par_iter()
+                    .filter_map(|v| {
+                        let idx = hashmod(seed, v, size as usize);
+                        if collide.contains(idx as usize) {
+                            a.remove(idx as usize);
+                            Some(v.clone())
+                        } else {
+                            None
                         }
-
-                        redo_keys_chunk
                     })
                     .collect();
 
