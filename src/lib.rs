@@ -94,7 +94,7 @@ pub struct Mphf<T> {
 
 const MAX_ITERS: u64 = 100;
 
-impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
+impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     /// Constructs an MPHF from a (possibly lazy) iterator over iterators.
     /// This allows construction of very large MPHFs without holding all the keys
     /// in memory simultaneously.
@@ -220,7 +220,7 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     }
 }
 
-impl<T: Clone + Hash + Debug> Mphf<T> {
+impl<T: Hash + Debug> Mphf<T> {
     /// Generate a minimal perfect hash function for the set of `objects`.
     /// `objects` must not contain any duplicate items.
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
@@ -251,8 +251,10 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
                 iter,
             );
 
-            (&redo_keys).iter().for_each(|v| cx.find_collisions_sync(v));
-            redo_keys = (&redo_keys).iter().filter_map(|v| cx.filter(v)).collect();
+            (&redo_keys)
+                .iter()
+                .for_each(|&v| cx.find_collisions_sync(v));
+            redo_keys = (&redo_keys).iter().filter_map(|&v| cx.filter(v)).collect();
 
             bitvecs.push(cx.a);
             iter += 1;
@@ -351,7 +353,7 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
     }
 }
 
-impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
+impl<T: Hash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
@@ -383,10 +385,10 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
 
             (&redo_keys)
                 .into_par_iter()
-                .for_each(|v| cx.find_collisions(v));
+                .for_each(|&v| cx.find_collisions(v));
             redo_keys = (&redo_keys)
                 .into_par_iter()
-                .filter_map(|v| cx.filter(v))
+                .filter_map(|&v| cx.filter(v))
                 .collect();
 
             bitvecs.push(cx.a);
@@ -436,11 +438,11 @@ impl Context {
         }
     }
 
-    fn filter<T: Hash + Clone>(&self, v: &T) -> Option<T> {
+    fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
         let idx = hashmod(self.seed, v, self.size) as usize;
         if self.collide.contains(idx) {
             self.a.remove(idx);
-            Some(v.clone())
+            Some(v)
         } else {
             None
         }
@@ -514,7 +516,7 @@ where
     }
 }
 
-impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
+impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
     pub fn from_chunked_iterator_parallel<I, N>(
         gamma: f64,
@@ -604,7 +606,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                 } else if collision {
                                     cx.a.remove(idx);
                                     if global.buffer_keys.load(Ordering::SeqCst) {
-                                        global.buffered_keys.lock().unwrap().push(key.clone());
+                                        global.buffered_keys.lock().unwrap().push(key);
                                     }
                                 } else {
                                     global.done_keys.insert(key_index);
@@ -680,7 +682,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let mut xsv: Vec<T> = Vec::new();
         xsv.extend(xs.into_iter());
@@ -692,7 +694,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf_serial<T>(xsv: &Vec<T>) -> bool
     where
-        T: Hash + PartialEq + Eq + Clone + Debug,
+        T: Hash + PartialEq + Eq + Debug,
     {
         // Generate the MPHF
         let phf = Mphf::new(1.7, &xsv);
@@ -714,7 +716,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf_parallel<T>(xsv: &Vec<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         // Generate the MPHF
         let phf = Mphf::new_parallel(1.7, &xsv, None);
@@ -735,7 +737,7 @@ mod tests {
 
     fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: usize) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator(1.7, &values, total);
 
@@ -755,7 +757,7 @@ mod tests {
 
     fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: usize) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator_parallel(1.7, &values, None, total, 2);
 
