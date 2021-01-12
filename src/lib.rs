@@ -543,30 +543,6 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         assert!(gamma > 1.01);
 
-        let find_collisions = |idx: usize, cx: &IterContext<'_, I, _, _, T>| {
-            if !cx.collide.contains(idx) {
-                let a_was_set = !cx.a.insert(idx);
-                if a_was_set {
-                    cx.collide.insert(idx);
-                }
-            }
-        };
-
-        let remove_collisions = |idx: usize,
-                                 key: &T,
-                                 keys_index: usize,
-                                 cx: &IterContext<'_, I, _, _, T>,
-                                 global: &Arc<GlobalContext<T>>| {
-            if cx.collide.contains(idx) {
-                cx.a.remove(idx);
-                if global.buffer_keys.load(Ordering::SeqCst) {
-                    global.buffered_keys.lock().unwrap().push(key.clone());
-                }
-            } else {
-                global.done_keys.insert(keys_index);
-            }
-        };
-
         let global = Arc::new(GlobalContext {
             done_keys: BitVector::new(std::cmp::max(255, n)),
             buffered_keys: Mutex::new(Vec::new()),
@@ -622,10 +598,18 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                 node_pos = index + 1;
 
                                 let idx = hashmod(iter, &key, size as usize) as usize;
+                                let collision = cx.collide.contains(idx);
                                 if job_id == 0 {
-                                    find_collisions(idx, &cx);
+                                    if !collision && !cx.a.insert(idx) {
+                                        cx.collide.insert(idx);
+                                    }
+                                } else if collision {
+                                    cx.a.remove(idx);
+                                    if global.buffer_keys.load(Ordering::SeqCst) {
+                                        global.buffered_keys.lock().unwrap().push(key.clone());
+                                    }
                                 } else {
-                                    remove_collisions(idx, &key, key_index, &cx, &global);
+                                    global.done_keys.insert(key_index);
                                 }
                             }
 
