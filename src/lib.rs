@@ -614,17 +614,19 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                             let mut node_pos = 0;
                             for index in 0..num_keys {
                                 let key_index = offset + index;
-                                if !global.done_keys.contains(key_index) {
-                                    let key = node.nth(index - node_pos).unwrap();
-                                    node_pos = index + 1;
+                                if global.done_keys.contains(key_index) {
+                                    continue;
+                                }
 
-                                    let idx = hashmod(iter, &key, size as usize) as usize;
-                                    if job_id == 0 {
-                                        find_collisions(idx, &cx);
-                                    } else {
-                                        remove_collisions(idx, &key, key_index, &cx, &global);
-                                    }
-                                } //end-if
+                                let key = node.nth(index - node_pos).unwrap();
+                                node_pos = index + 1;
+
+                                let idx = hashmod(iter, &key, size as usize) as usize;
+                                if job_id == 0 {
+                                    find_collisions(idx, &cx);
+                                } else {
+                                    remove_collisions(idx, &key, key_index, &cx, &global);
+                                }
                             }
 
                             cx.done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
