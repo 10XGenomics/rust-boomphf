@@ -540,7 +540,6 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         let mut iter: u64 = 0;
         let mut bitvecs = Vec::<BitVector>::new();
-        let done_keys = Arc::new(BitVector::new(std::cmp::max(255, n)));
 
         assert!(gamma > 1.01);
 
@@ -556,42 +555,46 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                 }
             };
 
-        let remove_collisions =
-            |seed: &u64,
-             key: &T,
-             size: &u64,
-             keys_index: usize,
-             collide: &Arc<BitVector>,
-             a: &Arc<BitVector>,
-             done_keys: &BitVector,
-             buffer_keys: &Arc<AtomicBool>,
-             buffered_keys_vec: &Arc<Mutex<Vec<T>>>| {
-                let idx = hashmod(*seed, key, *size as usize);
+        let remove_collisions = |seed: &u64,
+                                 key: &T,
+                                 size: &u64,
+                                 keys_index: usize,
+                                 collide: &Arc<BitVector>,
+                                 a: &Arc<BitVector>,
+                                 global: &Arc<GlobalContext<T>>| {
+            let idx = hashmod(*seed, key, *size as usize);
 
-                if collide.contains(idx as usize) {
-                    a.remove(idx as usize);
-                    if buffer_keys.load(Ordering::SeqCst) {
-                        buffered_keys_vec.lock().unwrap().push(key.clone());
-                    }
-                } else {
-                    done_keys.insert(keys_index as usize);
+            if collide.contains(idx as usize) {
+                a.remove(idx as usize);
+                if global.buffer_keys.load(Ordering::SeqCst) {
+                    global.buffered_keys.lock().unwrap().push(key.clone());
                 }
-            };
+            } else {
+                global.done_keys.insert(keys_index as usize);
+            }
+        };
 
-        let buffered_keys_vec = Arc::new(Mutex::new(Vec::new()));
-        let buffer_keys = Arc::new(AtomicBool::new(false));
+        let global = Arc::new(GlobalContext {
+            done_keys: BitVector::new(std::cmp::max(255, n)),
+            buffered_keys: Mutex::new(Vec::new()),
+            buffer_keys: AtomicBool::new(false),
+        });
         loop {
             if max_iters.is_some() && iter > max_iters.unwrap() {
-                error!("ran out of key space. items: {:?}", done_keys.len());
+                error!("ran out of key space. items: {:?}", global.done_keys.len());
                 panic!("counldn't find unique hashes");
             }
 
-            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+            let keys_remaining = if iter == 0 {
+                n
+            } else {
+                n - global.done_keys.len()
+            };
             if keys_remaining == 0 {
                 break;
             }
             if keys_remaining < MAX_BUFFER_SIZE && keys_remaining < min_buffer_keys_threshold {
-                buffer_keys.store(true, Ordering::SeqCst);
+                global.buffer_keys.store(true, Ordering::SeqCst);
             }
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
@@ -603,11 +606,9 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
             crossbeam_utils::thread::scope(|scope| {
                 for _ in 0..num_threads {
-                    let buffer_keys = buffer_keys.clone();
-                    let buffered_keys_vec = buffered_keys_vec.clone();
+                    let global = global.clone();
                     let done_keys_count = done_keys_count.clone();
                     let work_queue = work_queue.clone();
-                    let done_keys = done_keys.clone();
                     let collide = collide.clone();
                     let a = a.clone();
 
@@ -622,7 +623,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                             let mut node_pos = 0;
                             for index in 0..num_keys {
                                 let key_index = offset + index;
-                                if !done_keys.contains(key_index) {
+                                if !global.done_keys.contains(key_index) {
                                     let key = node.nth(index - node_pos).unwrap();
                                     node_pos = index + 1;
 
@@ -630,15 +631,7 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                         find_collisions(&iter, &key, &size, &collide, &a);
                                     } else {
                                         remove_collisions(
-                                            &iter,
-                                            &key,
-                                            &size,
-                                            key_index,
-                                            &collide,
-                                            &a,
-                                            &done_keys,
-                                            &buffer_keys,
-                                            &buffered_keys_vec,
+                                            &iter, &key, &size, key_index, &collide, &a, &global,
                                         );
                                     }
                                 } //end-if
@@ -655,12 +648,12 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             bitvecs.push(unwrapped_a);
 
             iter += 1;
-            if buffer_keys.load(Ordering::SeqCst) {
+            if global.buffer_keys.load(Ordering::SeqCst) {
                 break;
             }
         } //end-loop
 
-        let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
+        let buffered_keys_vec = global.buffered_keys.lock().unwrap();
         if buffered_keys_vec.len() > 1 {
             let mut buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
 
@@ -677,6 +670,12 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
             phantom: PhantomData,
         }
     }
+}
+
+struct GlobalContext<T> {
+    done_keys: BitVector,
+    buffered_keys: Mutex<Vec<T>>,
+    buffer_keys: AtomicBool,
 }
 
 #[cfg(test)]
