@@ -806,9 +806,9 @@ mod tests {
 
             let mut slices: Vec<Vec<u64>> = Vec::new();
 
-            let mut total = 0;
+            let mut total = 0_usize;
             for slc_len in lens {
-                let end = std::cmp::min(items.len(), total + slc_len);
+                let end = std::cmp::min(items.len(), total.saturating_add(slc_len));
                 let slc = Vec::from(&items[total..end]);
                 slices.push(slc);
                 total = end;
