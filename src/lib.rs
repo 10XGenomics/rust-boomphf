@@ -227,30 +227,34 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
     pub fn new(gamma: f64, objects: &[T]) -> Mphf<T> {
+        assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
         let mut iter = 0;
-        let mut redo_keys = Vec::new();
 
-        assert!(gamma > 1.01);
-        while !redo_keys.is_empty() || iter == 0 {
-            // this scope structure is needed to allow keys to be
-            // the 'objects' reference on the first loop, and a reference
-            // to 'redo_keys' on subsequent iterations.
-            redo_keys = {
-                let keys = if iter == 0 { objects } else { &redo_keys };
+        let mut cx = Context::new(
+            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            iter,
+        );
 
-                let mut cx = Context::new(
-                    std::cmp::max(255, (gamma * keys.len() as f64) as usize),
-                    iter,
-                );
+        (&objects).iter().for_each(|v| cx.find_collisions_sync(v));
+        let mut redo_keys = (&objects)
+            .iter()
+            .filter_map(|v| cx.filter(v))
+            .collect::<Vec<_>>();
 
-                (&keys).iter().for_each(|v| cx.find_collisions_sync(v));
-                let redo_keys_tmp = (&keys).iter().filter_map(|v| cx.filter(v)).collect();
+        bitvecs.push(cx.a);
+        iter += 1;
 
-                bitvecs.push(cx.a);
-                redo_keys_tmp
-            };
+        while !redo_keys.is_empty() {
+            let mut cx = Context::new(
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                iter,
+            );
 
+            (&redo_keys).iter().for_each(|v| cx.find_collisions_sync(v));
+            redo_keys = (&redo_keys).iter().filter_map(|v| cx.filter(v)).collect();
+
+            bitvecs.push(cx.a);
             iter += 1;
             if iter > MAX_ITERS {
                 error!("ran out of key space. items: {:?}", redo_keys);
@@ -351,33 +355,41 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
+        assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
         let mut iter = 0;
-        let mut redo_keys = Vec::new();
 
-        assert!(gamma > 1.01);
-        while !redo_keys.is_empty() || iter == 0 {
-            // this scope structure is needed to allow keys to be
-            // the 'objects' reference on the first loop, and a reference
-            // to 'redo_keys' on subsequent iterations.
-            redo_keys = {
-                let keys = if iter == 0 { objects } else { &redo_keys };
+        let cx = Context::new(
+            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            starting_seed.unwrap_or(0) + iter,
+        );
 
-                let cx = Context::new(
-                    std::cmp::max(255, (gamma * keys.len() as f64) as usize),
-                    starting_seed.unwrap_or(0) + iter,
-                );
+        (&objects)
+            .into_par_iter()
+            .for_each(|v| cx.find_collisions(v));
+        let mut redo_keys = (&objects)
+            .into_par_iter()
+            .filter_map(|v| cx.filter(v))
+            .collect::<Vec<_>>();
 
-                (&keys).into_par_iter().for_each(|v| cx.find_collisions(v));
-                let redo_keys_tmp = (&keys)
-                    .into_par_iter()
-                    .filter_map(|v| cx.filter(v))
-                    .collect();
+        bitvecs.push(cx.a);
+        iter += 1;
 
-                bitvecs.push(cx.a);
-                redo_keys_tmp
-            };
+        while !redo_keys.is_empty() {
+            let cx = Context::new(
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                starting_seed.unwrap_or(0) + iter,
+            );
 
+            (&redo_keys)
+                .into_par_iter()
+                .for_each(|v| cx.find_collisions(v));
+            redo_keys = (&redo_keys)
+                .into_par_iter()
+                .filter_map(|v| cx.filter(v))
+                .collect();
+
+            bitvecs.push(cx.a);
             iter += 1;
             if iter > MAX_ITERS {
                 println!("ran out of key space. items: {:?}", redo_keys);
