@@ -20,13 +20,13 @@
 //! // Get hash value of all objects
 //! let mut hashes = Vec::new();
 //! for v in possible_objects {
-//!		hashes.push(phf.hash(&v));
-//!	}
-//!	hashes.sort();
+//!     hashes.push(phf.hash(&v));
+//! }
+//! hashes.sort();
 //!
 //! // Expected hash output is set of all integers from 0..n
 //! let expected_hashes: Vec<u64> = (0 .. n as u64).collect();
-//!	assert!(hashes == expected_hashes)
+//! assert!(hashes == expected_hashes)
 //! ```
 
 use rayon::prelude::*;
@@ -55,7 +55,7 @@ fn fold(v: u64) -> u32 {
 
 #[inline]
 fn hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
-    let mut state = wyhash::WyHash::with_seed(1 << iter + iter);
+    let mut state = wyhash::WyHash::with_seed(1 << (iter + iter));
     v.hash(&mut state);
     state.finish()
 }
@@ -67,7 +67,7 @@ fn hash_with_seed32<T: Hash + ?Sized>(iter: u64, v: &T) -> u32 {
 
 #[inline]
 fn fastmod(hash: u32, n: u32) -> u64 {
-    (hash as u64) * (n as u64) >> 32
+    ((hash as u64) * (n as u64)) >> 32
 }
 
 #[inline]
@@ -212,13 +212,11 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
             ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 }
 
@@ -228,7 +226,7 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
-    pub fn new(gamma: f64, objects: &Vec<T>) -> Mphf<T> {
+    pub fn new(gamma: f64, objects: &[T]) -> Mphf<T> {
         let mut bitvecs = Vec::new();
         let mut iter = 0;
         let mut redo_keys = Vec::new();
@@ -280,25 +278,23 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
                 redo_keys_tmp
             };
 
-            if redo_keys.len() == 0 {
+            if redo_keys.is_empty() {
                 break;
             }
             iter += 1;
         }
 
         let ranks = Self::compute_ranks(&bitvecs);
-        let r = Mphf {
+        Mphf {
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks: ranks,
+            ranks,
             phantom: PhantomData,
-        };
-
-        r
+        }
     }
 
-    fn compute_ranks(bvs: &Vec<BitVector>) -> Box<[Box<[u64]>]> {
+    fn compute_ranks(bvs: &[BitVector]) -> Box<[Box<[u64]>]> {
         let mut ranks = Vec::new();
-        let mut pop = 0 as u64;
+        let mut pop = 0_u64;
 
         for bv in bvs {
             let mut rank: Vec<u64> = Vec::new();
@@ -381,7 +377,7 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
 impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
-    pub fn new_parallel(gamma: f64, objects: &Vec<T>, starting_seed: Option<u64>) -> Mphf<T> {
+    pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
         let mut bitvecs = Vec::new();
         let mut iter = 0;
         let mut redo_keys = Vec::new();
@@ -445,7 +441,7 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
                 redo_keys_tmp
             };
 
-            if redo_keys.len() == 0 {
+            if redo_keys.is_empty() {
                 break;
             }
             iter += 1;
@@ -523,7 +519,7 @@ where
 
         self.last_key_index += num_keys;
 
-        return Some((node.into_iter(), self.job_id, node_keys_start, num_keys));
+        Some((node.into_iter(), self.job_id, node_keys_start, num_keys))
     }
 }
 
@@ -624,19 +620,17 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
                     scope.spawn(move |_| {
                         loop {
-                            let (node, job_id, offset, num_keys) =
+                            let (mut node, job_id, offset, num_keys) =
                                 match work_queue.lock().unwrap().next(&done_keys_count) {
                                     None => break,
                                     Some(val) => val,
                                 };
 
-                            let mut into_node = node.into_iter();
                             let mut node_pos = 0;
-
                             for index in 0..num_keys {
                                 let key_index = offset + index;
                                 if !done_keys.contains(key_index) {
-                                    let key = into_node.nth(index - node_pos).unwrap();
+                                    let key = node.nth(index - node_pos).unwrap();
                                     node_pos = index + 1;
 
                                     if job_id == 0 {
@@ -812,9 +806,9 @@ mod tests {
 
             let mut slices: Vec<Vec<u64>> = Vec::new();
 
-            let mut total = 0;
+            let mut total = 0_usize;
             for slc_len in lens {
-                let end = std::cmp::min(items.len(), total + slc_len);
+                let end = std::cmp::min(items.len(), total.saturating_add(slc_len));
                 let slc = Vec::from(&items[total..end]);
                 slices.push(slc);
                 total = end;

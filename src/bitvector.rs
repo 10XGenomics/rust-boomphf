@@ -90,11 +90,11 @@ where
 impl core::clone::Clone for BitVector {
     fn clone(&self) -> Self {
         Self {
-            bits: self.bits.clone(),
+            bits: self.bits,
             vector: self
                 .vector
                 .iter()
-                .map(|x| AtomicUsize::new(x.load(Ordering::SeqCst).clone()))
+                .map(|x| AtomicUsize::new(x.load(Ordering::SeqCst)))
                 .collect(),
         }
     }
@@ -245,8 +245,8 @@ impl BitVector {
         let (word, mask) = word_mask(bit);
         let data = self.vector[word].get_mut();
 
-        let old_data = data.clone();
-        *data = *data | mask;
+        let old_data = *data;
+        *data |= mask;
         old_data & mask == 0
     }
 
@@ -298,7 +298,7 @@ impl BitVector {
     }
 
     /// Return a iterator of the set element in the bitvector,
-    pub fn iter<'a>(&'a self) -> BitVectorIter<'a> {
+    pub fn iter(&self) -> BitVectorIter<'_> {
         BitVectorIter {
             iter: self.vector.iter(),
             current: 0,
@@ -340,7 +340,7 @@ impl<'a> Iterator for BitVectorIter<'a> {
         self.current >>= offset;
         self.current >>= 1; // shift otherwise overflows for 0b1000_0000_…_0000
         self.idx += offset + 1;
-        return Some(self.idx - 1);
+        Some(self.idx - 1)
     }
 }
 
