@@ -543,33 +543,27 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         assert!(gamma > 1.01);
 
-        let find_collisions =
-            |seed: &u64, key: &T, size: &u64, cx: &IterContext<'_, I, _, _, T>| {
-                let idx = hashmod(*seed, key, *size as usize);
-
-                if !cx.collide.contains(idx as usize) {
-                    let a_was_set = !cx.a.insert(idx as usize);
-                    if a_was_set {
-                        cx.collide.insert(idx as usize);
-                    }
+        let find_collisions = |idx: usize, cx: &IterContext<'_, I, _, _, T>| {
+            if !cx.collide.contains(idx) {
+                let a_was_set = !cx.a.insert(idx);
+                if a_was_set {
+                    cx.collide.insert(idx);
                 }
-            };
+            }
+        };
 
-        let remove_collisions = |seed: &u64,
+        let remove_collisions = |idx: usize,
                                  key: &T,
-                                 size: &u64,
                                  keys_index: usize,
                                  cx: &IterContext<'_, I, _, _, T>,
                                  global: &Arc<GlobalContext<T>>| {
-            let idx = hashmod(*seed, key, *size as usize);
-
-            if cx.collide.contains(idx as usize) {
-                cx.a.remove(idx as usize);
+            if cx.collide.contains(idx) {
+                cx.a.remove(idx);
                 if global.buffer_keys.load(Ordering::SeqCst) {
                     global.buffered_keys.lock().unwrap().push(key.clone());
                 }
             } else {
-                global.done_keys.insert(keys_index as usize);
+                global.done_keys.insert(keys_index);
             }
         };
 
@@ -624,12 +618,11 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                                     let key = node.nth(index - node_pos).unwrap();
                                     node_pos = index + 1;
 
+                                    let idx = hashmod(iter, &key, size as usize) as usize;
                                     if job_id == 0 {
-                                        find_collisions(&iter, &key, &size, &cx);
+                                        find_collisions(idx, &cx);
                                     } else {
-                                        remove_collisions(
-                                            &iter, &key, &size, key_index, &cx, &global,
-                                        );
+                                        remove_collisions(idx, &key, key_index, &cx, &global);
                                     }
                                 } //end-if
                             }
