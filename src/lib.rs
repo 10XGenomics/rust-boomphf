@@ -232,62 +232,35 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
         let mut redo_keys = Vec::new();
 
         assert!(gamma > 1.01);
-
-        loop {
+        while !redo_keys.is_empty() || iter == 0 {
             // this scope structure is needed to allow keys to be
             // the 'objects' reference on the first loop, and a reference
             // to 'redo_keys' on subsequent iterations.
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if iter > MAX_ITERS {
-                    error!("ran out of key space. items: {:?}", keys);
-                    panic!("counldn't find unique hashes");
-                }
+                let mut cx = Context::new(
+                    std::cmp::max(255, (gamma * keys.len() as f64) as usize),
+                    iter,
+                );
 
-                let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-                let mut a = BitVector::new(size as usize);
-                let mut collide = BitVector::new(size as usize);
+                (&keys).iter().for_each(|v| cx.find_collisions_sync(v));
+                let redo_keys_tmp = (&keys).iter().filter_map(|v| cx.filter(v)).collect();
 
-                let seed = iter;
-
-                for v in keys.iter() {
-                    let idx = hashmod(seed, v, size as usize);
-
-                    if collide.contains(idx as usize) {
-                        continue;
-                    }
-
-                    let a_was_set = !a.insert_sync(idx as usize);
-                    if a_was_set {
-                        collide.insert_sync(idx as usize);
-                    }
-                }
-
-                let mut redo_keys_tmp = Vec::new();
-                for v in keys.iter() {
-                    let idx = hashmod(seed, v, size as usize);
-
-                    if collide.contains(idx as usize) {
-                        redo_keys_tmp.push(v.clone());
-                        a.remove(idx as usize);
-                    }
-                }
-
-                bitvecs.push(a);
+                bitvecs.push(cx.a);
                 redo_keys_tmp
             };
 
-            if redo_keys.is_empty() {
-                break;
-            }
             iter += 1;
+            if iter > MAX_ITERS {
+                error!("ran out of key space. items: {:?}", redo_keys);
+                panic!("counldn't find unique hashes");
+            }
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
+            ranks: Self::compute_ranks(&bitvecs),
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
             phantom: PhantomData,
         }
     }
@@ -383,68 +356,81 @@ impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
         let mut redo_keys = Vec::new();
 
         assert!(gamma > 1.01);
-
-        loop {
+        while !redo_keys.is_empty() || iter == 0 {
             // this scope structure is needed to allow keys to be
             // the 'objects' reference on the first loop, and a reference
             // to 'redo_keys' on subsequent iterations.
             redo_keys = {
                 let keys = if iter == 0 { objects } else { &redo_keys };
 
-                if iter > MAX_ITERS {
-                    println!("ran out of key space. items: {:?}", keys);
-                    panic!("counldn't find unique hashes");
-                }
+                let cx = Context::new(
+                    std::cmp::max(255, (gamma * keys.len() as f64) as usize),
+                    starting_seed.unwrap_or(0) + iter,
+                );
 
-                let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-                let a = BitVector::new(size as usize);
-                let collide = BitVector::new(size as usize);
-
-                let seed = match starting_seed {
-                    None => iter,
-                    Some(seed) => iter + seed,
-                };
-
-                (&keys).into_par_iter().for_each(|v| {
-                    let idx = hashmod(seed, v, size as usize);
-                    if collide.contains(idx as usize) {
-                        return;
-                    }
-
-                    let a_was_set = !a.insert(idx as usize);
-                    if a_was_set {
-                        collide.insert(idx as usize);
-                    }
-                });
-
+                (&keys).into_par_iter().for_each(|v| cx.find_collisions(v));
                 let redo_keys_tmp = (&keys)
                     .into_par_iter()
-                    .filter_map(|v| {
-                        let idx = hashmod(seed, v, size as usize);
-                        if collide.contains(idx as usize) {
-                            a.remove(idx as usize);
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|v| cx.filter(v))
                     .collect();
 
-                bitvecs.push(a);
+                bitvecs.push(cx.a);
                 redo_keys_tmp
             };
 
-            if redo_keys.is_empty() {
-                break;
-            }
             iter += 1;
+            if iter > MAX_ITERS {
+                println!("ran out of key space. items: {:?}", redo_keys);
+                panic!("counldn't find unique hashes");
+            }
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
+            ranks: Self::compute_ranks(&bitvecs),
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
             phantom: PhantomData,
+        }
+    }
+}
+
+struct Context {
+    size: usize,
+    seed: u64,
+    a: BitVector,
+    collide: BitVector,
+}
+
+impl Context {
+    fn new(size: usize, seed: u64) -> Self {
+        Self {
+            size,
+            seed,
+            a: BitVector::new(size),
+            collide: BitVector::new(size),
+        }
+    }
+
+    fn find_collisions<T: Hash>(&self, v: &T) {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if !self.collide.contains(idx) && !self.a.insert(idx) {
+            self.collide.insert(idx);
+        }
+    }
+
+    fn find_collisions_sync<T: Hash>(&mut self, v: &T) {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if !self.collide.contains(idx) && !self.a.insert_sync(idx) {
+            self.collide.insert_sync(idx);
+        }
+    }
+
+    fn filter<T: Hash + Clone>(&self, v: &T) -> Option<T> {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if self.collide.contains(idx) {
+            self.a.remove(idx);
+            Some(v.clone())
+        } else {
+            None
         }
     }
 }
