@@ -94,7 +94,7 @@ pub struct Mphf<T> {
 
 const MAX_ITERS: u64 = 100;
 
-impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
+impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     /// Constructs an MPHF from a (possibly lazy) iterator over iterators.
     /// This allows construction of very large MPHFs without holding all the keys
     /// in memory simultaneously.
@@ -220,74 +220,53 @@ impl<'a, T: 'a + Hash + Clone + Debug> Mphf<T> {
     }
 }
 
-impl<T: Clone + Hash + Debug> Mphf<T> {
+impl<T: Hash + Debug> Mphf<T> {
     /// Generate a minimal perfect hash function for the set of `objects`.
     /// `objects` must not contain any duplicate items.
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
     /// and the size of the datastructure representing the hash function. See the paper for details.
     /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
     pub fn new(gamma: f64, objects: &[T]) -> Mphf<T> {
+        assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
         let mut iter = 0;
-        let mut redo_keys = Vec::new();
 
-        assert!(gamma > 1.01);
+        let mut cx = Context::new(
+            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            iter,
+        );
 
-        loop {
-            // this scope structure is needed to allow keys to be
-            // the 'objects' reference on the first loop, and a reference
-            // to 'redo_keys' on subsequent iterations.
-            redo_keys = {
-                let keys = if iter == 0 { objects } else { &redo_keys };
+        (&objects).iter().for_each(|v| cx.find_collisions_sync(v));
+        let mut redo_keys = (&objects)
+            .iter()
+            .filter_map(|v| cx.filter(v))
+            .collect::<Vec<_>>();
 
-                if iter > MAX_ITERS {
-                    error!("ran out of key space. items: {:?}", keys);
-                    panic!("counldn't find unique hashes");
-                }
+        bitvecs.push(cx.a);
+        iter += 1;
 
-                let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-                let mut a = BitVector::new(size as usize);
-                let mut collide = BitVector::new(size as usize);
+        while !redo_keys.is_empty() {
+            let mut cx = Context::new(
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                iter,
+            );
 
-                let seed = iter;
+            (&redo_keys)
+                .iter()
+                .for_each(|&v| cx.find_collisions_sync(v));
+            redo_keys = (&redo_keys).iter().filter_map(|&v| cx.filter(v)).collect();
 
-                for v in keys.iter() {
-                    let idx = hashmod(seed, v, size as usize);
-
-                    if collide.contains(idx as usize) {
-                        continue;
-                    }
-
-                    let a_was_set = !a.insert_sync(idx as usize);
-                    if a_was_set {
-                        collide.insert_sync(idx as usize);
-                    }
-                }
-
-                let mut redo_keys_tmp = Vec::new();
-                for v in keys.iter() {
-                    let idx = hashmod(seed, v, size as usize);
-
-                    if collide.contains(idx as usize) {
-                        redo_keys_tmp.push(v.clone());
-                        a.remove(idx as usize);
-                    }
-                }
-
-                bitvecs.push(a);
-                redo_keys_tmp
-            };
-
-            if redo_keys.is_empty() {
-                break;
-            }
+            bitvecs.push(cx.a);
             iter += 1;
+            if iter > MAX_ITERS {
+                error!("ran out of key space. items: {:?}", redo_keys);
+                panic!("counldn't find unique hashes");
+            }
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
+            ranks: Self::compute_ranks(&bitvecs),
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
             phantom: PhantomData,
         }
     }
@@ -374,77 +353,98 @@ impl<T: Clone + Hash + Debug> Mphf<T> {
     }
 }
 
-impl<T: Hash + Clone + Debug + Sync + Send> Mphf<T> {
+impl<T: Hash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
+        assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
         let mut iter = 0;
-        let mut redo_keys = Vec::new();
 
-        assert!(gamma > 1.01);
+        let cx = Context::new(
+            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            starting_seed.unwrap_or(0) + iter,
+        );
 
-        loop {
-            // this scope structure is needed to allow keys to be
-            // the 'objects' reference on the first loop, and a reference
-            // to 'redo_keys' on subsequent iterations.
-            redo_keys = {
-                let keys = if iter == 0 { objects } else { &redo_keys };
+        (&objects)
+            .into_par_iter()
+            .for_each(|v| cx.find_collisions(v));
+        let mut redo_keys = (&objects)
+            .into_par_iter()
+            .filter_map(|v| cx.filter(v))
+            .collect::<Vec<_>>();
 
-                if iter > MAX_ITERS {
-                    println!("ran out of key space. items: {:?}", keys);
-                    panic!("counldn't find unique hashes");
-                }
+        bitvecs.push(cx.a);
+        iter += 1;
 
-                let size = std::cmp::max(255, (gamma * keys.len() as f64) as u64);
-                let a = BitVector::new(size as usize);
-                let collide = BitVector::new(size as usize);
+        while !redo_keys.is_empty() {
+            let cx = Context::new(
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                starting_seed.unwrap_or(0) + iter,
+            );
 
-                let seed = match starting_seed {
-                    None => iter,
-                    Some(seed) => iter + seed,
-                };
+            (&redo_keys)
+                .into_par_iter()
+                .for_each(|&v| cx.find_collisions(v));
+            redo_keys = (&redo_keys)
+                .into_par_iter()
+                .filter_map(|&v| cx.filter(v))
+                .collect();
 
-                (&keys).into_par_iter().for_each(|v| {
-                    let idx = hashmod(seed, v, size as usize);
-                    if collide.contains(idx as usize) {
-                        return;
-                    }
-
-                    let a_was_set = !a.insert(idx as usize);
-                    if a_was_set {
-                        collide.insert(idx as usize);
-                    }
-                });
-
-                let redo_keys_tmp = (&keys)
-                    .into_par_iter()
-                    .filter_map(|v| {
-                        let idx = hashmod(seed, v, size as usize);
-                        if collide.contains(idx as usize) {
-                            a.remove(idx as usize);
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                bitvecs.push(a);
-                redo_keys_tmp
-            };
-
-            if redo_keys.is_empty() {
-                break;
-            }
+            bitvecs.push(cx.a);
             iter += 1;
+            if iter > MAX_ITERS {
+                println!("ran out of key space. items: {:?}", redo_keys);
+                panic!("counldn't find unique hashes");
+            }
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
+            ranks: Self::compute_ranks(&bitvecs),
             bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
             phantom: PhantomData,
+        }
+    }
+}
+
+struct Context {
+    size: usize,
+    seed: u64,
+    a: BitVector,
+    collide: BitVector,
+}
+
+impl Context {
+    fn new(size: usize, seed: u64) -> Self {
+        Self {
+            size,
+            seed,
+            a: BitVector::new(size),
+            collide: BitVector::new(size),
+        }
+    }
+
+    fn find_collisions<T: Hash>(&self, v: &T) {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if !self.collide.contains(idx) && !self.a.insert(idx) {
+            self.collide.insert(idx);
+        }
+    }
+
+    fn find_collisions_sync<T: Hash>(&mut self, v: &T) {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if !self.collide.contains(idx) && !self.a.insert_sync(idx) {
+            self.collide.insert_sync(idx);
+        }
+    }
+
+    fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if self.collide.contains(idx) {
+            self.a.remove(idx);
+            Some(v)
+        } else {
+            None
         }
     }
 }
@@ -485,7 +485,7 @@ where
         }
     }
 
-    fn next(&mut self, done_keys_count: &Arc<AtomicUsize>) -> Option<(N2, u8, usize, usize)> {
+    fn next(&mut self, done_keys_count: &AtomicUsize) -> Option<(N2, u8, usize, usize)> {
         if self.last_key_index == self.num_keys {
             loop {
                 let done_count = done_keys_count.load(Ordering::SeqCst);
@@ -516,7 +516,7 @@ where
     }
 }
 
-impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
+impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
     pub fn from_chunked_iterator_parallel<I, N>(
         gamma: f64,
@@ -540,81 +540,49 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
 
         let mut iter: u64 = 0;
         let mut bitvecs = Vec::<BitVector>::new();
-        let done_keys = Arc::new(BitVector::new(std::cmp::max(255, n)));
 
         assert!(gamma > 1.01);
 
-        let find_collisions =
-            |seed: &u64, key: &T, size: &u64, collide: &Arc<BitVector>, a: &Arc<BitVector>| {
-                let idx = hashmod(*seed, key, *size as usize);
-
-                if !collide.contains(idx as usize) {
-                    let a_was_set = !a.insert(idx as usize);
-                    if a_was_set {
-                        collide.insert(idx as usize);
-                    }
-                }
-            };
-
-        let remove_collisions =
-            |seed: &u64,
-             key: &T,
-             size: &u64,
-             keys_index: usize,
-             collide: &Arc<BitVector>,
-             a: &Arc<BitVector>,
-             done_keys: &BitVector,
-             buffer_keys: &Arc<AtomicBool>,
-             buffered_keys_vec: &Arc<Mutex<Vec<T>>>| {
-                let idx = hashmod(*seed, key, *size as usize);
-
-                if collide.contains(idx as usize) {
-                    a.remove(idx as usize);
-                    if buffer_keys.load(Ordering::SeqCst) {
-                        buffered_keys_vec.lock().unwrap().push(key.clone());
-                    }
-                } else {
-                    done_keys.insert(keys_index as usize);
-                }
-            };
-
-        let buffered_keys_vec = Arc::new(Mutex::new(Vec::new()));
-        let buffer_keys = Arc::new(AtomicBool::new(false));
+        let global = Arc::new(GlobalContext {
+            done_keys: BitVector::new(std::cmp::max(255, n)),
+            buffered_keys: Mutex::new(Vec::new()),
+            buffer_keys: AtomicBool::new(false),
+        });
         loop {
             if max_iters.is_some() && iter > max_iters.unwrap() {
-                error!("ran out of key space. items: {:?}", done_keys.len());
+                error!("ran out of key space. items: {:?}", global.done_keys.len());
                 panic!("counldn't find unique hashes");
             }
 
-            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+            let keys_remaining = if iter == 0 {
+                n
+            } else {
+                n - global.done_keys.len()
+            };
             if keys_remaining == 0 {
                 break;
             }
             if keys_remaining < MAX_BUFFER_SIZE && keys_remaining < min_buffer_keys_threshold {
-                buffer_keys.store(true, Ordering::SeqCst);
+                global.buffer_keys.store(true, Ordering::SeqCst);
             }
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
-            let a = Arc::new(BitVector::new(size as usize));
-            let collide = Arc::new(BitVector::new(size as usize));
-
-            let work_queue = Arc::new(Mutex::new(Queue::new(objects, n)));
-            let done_keys_count = Arc::new(AtomicUsize::new(0));
+            let cx = Arc::new(IterContext {
+                done_keys_count: AtomicUsize::new(0),
+                work_queue: Mutex::new(Queue::new(objects, n)),
+                collide: BitVector::new(size as usize),
+                a: BitVector::new(size as usize),
+            });
 
             crossbeam_utils::thread::scope(|scope| {
                 for _ in 0..num_threads {
-                    let buffer_keys = buffer_keys.clone();
-                    let buffered_keys_vec = buffered_keys_vec.clone();
-                    let done_keys_count = done_keys_count.clone();
-                    let work_queue = work_queue.clone();
-                    let done_keys = done_keys.clone();
-                    let collide = collide.clone();
-                    let a = a.clone();
+                    let global = global.clone();
+                    let cx = cx.clone();
 
                     scope.spawn(move |_| {
                         loop {
                             let (mut node, job_id, offset, num_keys) =
-                                match work_queue.lock().unwrap().next(&done_keys_count) {
+                                match cx.work_queue.lock().unwrap().next(&cx.done_keys_count) {
                                     None => break,
                                     Some(val) => val,
                                 };
@@ -622,45 +590,48 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
                             let mut node_pos = 0;
                             for index in 0..num_keys {
                                 let key_index = offset + index;
-                                if !done_keys.contains(key_index) {
-                                    let key = node.nth(index - node_pos).unwrap();
-                                    node_pos = index + 1;
+                                if global.done_keys.contains(key_index) {
+                                    continue;
+                                }
 
-                                    if job_id == 0 {
-                                        find_collisions(&iter, &key, &size, &collide, &a);
-                                    } else {
-                                        remove_collisions(
-                                            &iter,
-                                            &key,
-                                            &size,
-                                            key_index,
-                                            &collide,
-                                            &a,
-                                            &done_keys,
-                                            &buffer_keys,
-                                            &buffered_keys_vec,
-                                        );
+                                let key = node.nth(index - node_pos).unwrap();
+                                node_pos = index + 1;
+
+                                let idx = hashmod(iter, &key, size as usize) as usize;
+                                let collision = cx.collide.contains(idx);
+                                if job_id == 0 {
+                                    if !collision && !cx.a.insert(idx) {
+                                        cx.collide.insert(idx);
                                     }
-                                } //end-if
+                                } else if collision {
+                                    cx.a.remove(idx);
+                                    if global.buffer_keys.load(Ordering::SeqCst) {
+                                        global.buffered_keys.lock().unwrap().push(key);
+                                    }
+                                } else {
+                                    global.done_keys.insert(key_index);
+                                }
                             }
 
-                            done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
+                            cx.done_keys_count.fetch_add(num_keys, Ordering::SeqCst);
                         } //end-loop
                     }); //end-scope
                 } //end-threads-for
             })
             .unwrap(); //end-crossbeam
 
-            let unwrapped_a = Arc::try_unwrap(a).unwrap();
-            bitvecs.push(unwrapped_a);
+            match Arc::try_unwrap(cx) {
+                Ok(cx) => bitvecs.push(cx.a),
+                Err(_) => unreachable!(),
+            }
 
             iter += 1;
-            if buffer_keys.load(Ordering::SeqCst) {
+            if global.buffer_keys.load(Ordering::SeqCst) {
                 break;
             }
         } //end-loop
 
-        let buffered_keys_vec = buffered_keys_vec.lock().unwrap();
+        let buffered_keys_vec = global.buffered_keys.lock().unwrap();
         if buffered_keys_vec.len() > 1 {
             let mut buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
 
@@ -679,6 +650,24 @@ impl<'a, T: 'a + Hash + Clone + Debug + Send + Sync> Mphf<T> {
     }
 }
 
+struct IterContext<'a, I: 'a, N1, N2, T>
+where
+    &'a I: IntoIterator<Item = N1>,
+    N2: Iterator<Item = T> + ExactSizeIterator,
+    N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
+{
+    done_keys_count: AtomicUsize,
+    work_queue: Mutex<Queue<'a, I, T>>,
+    collide: BitVector,
+    a: BitVector,
+}
+
+struct GlobalContext<T> {
+    done_keys: BitVector,
+    buffered_keys: Mutex<Vec<T>>,
+    buffer_keys: AtomicBool,
+}
+
 #[cfg(test)]
 #[macro_use]
 extern crate quickcheck;
@@ -693,7 +682,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let mut xsv: Vec<T> = Vec::new();
         xsv.extend(xs.into_iter());
@@ -705,7 +694,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf_serial<T>(xsv: &Vec<T>) -> bool
     where
-        T: Hash + PartialEq + Eq + Clone + Debug,
+        T: Hash + PartialEq + Eq + Debug,
     {
         // Generate the MPHF
         let phf = Mphf::new(1.7, &xsv);
@@ -727,7 +716,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf_parallel<T>(xsv: &Vec<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         // Generate the MPHF
         let phf = Mphf::new_parallel(1.7, &xsv, None);
@@ -748,7 +737,7 @@ mod tests {
 
     fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: usize) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator(1.7, &values, total);
 
@@ -768,7 +757,7 @@ mod tests {
 
     fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: usize) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Clone + Debug + Send,
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator_parallel(1.7, &values, None, total, 2);
 

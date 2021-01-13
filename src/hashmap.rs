@@ -21,7 +21,7 @@ pub struct BoomHashMap<K: Hash, D> {
 
 impl<K, D> BoomHashMap<K, D>
 where
-    K: Clone + Hash + Debug + PartialEq,
+    K: Hash + Debug + PartialEq,
     D: Debug,
 {
     fn create_map(mut keys: Vec<K>, mut values: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
@@ -113,7 +113,7 @@ where
 
 impl<K, D> BoomHashMap<K, D>
 where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
+    K: Hash + Debug + PartialEq + Send + Sync,
     D: Debug,
 {
     /// Create a new hash map from the parallel array `keys` and `values`, using a parallelized method to construct the Mphf.
@@ -220,7 +220,7 @@ impl<'a, K: Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
-    K: Clone + Hash + Debug + PartialEq,
+    K: Hash + Debug + PartialEq,
     D1: Debug,
     D2: Debug,
 {
@@ -323,7 +323,7 @@ where
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
+    K: Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
     D2: Debug,
 {
@@ -345,7 +345,7 @@ pub struct NoKeyBoomHashMap<K, D1> {
 
 impl<K, D1> NoKeyBoomHashMap<K, D1>
 where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
+    K: Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
 {
     pub fn new_parallel(mut keys: Vec<K>, mut values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
@@ -394,7 +394,7 @@ pub struct NoKeyBoomHashMap2<K, D1, D2> {
 
 impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
 where
-    K: Clone + Hash + Debug + PartialEq + Send + Sync,
+    K: Hash + Debug + PartialEq + Send + Sync,
     D1: Debug,
     D2: Debug,
 {
