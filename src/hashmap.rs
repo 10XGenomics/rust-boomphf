@@ -11,7 +11,7 @@ use std::iter::ExactSizeIterator;
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap<K: Hash, D> {
     mphf: Mphf<K>,
@@ -111,6 +111,23 @@ where
     }
 }
 
+impl<K, D> core::iter::FromIterator<(K, D)> for BoomHashMap<K, D>
+where
+    K: Hash + Debug + PartialEq,
+    D: Debug,
+{
+    fn from_iter<I: IntoIterator<Item = (K, D)>>(iter: I) -> Self {
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+
+        for (k, v) in iter {
+            keys.push(k);
+            values.push(v);
+        }
+        Self::new(keys, values)
+    }
+}
+
 impl<K, D> BoomHashMap<K, D>
 where
     K: Hash + Debug + PartialEq + Send + Sync,
@@ -167,7 +184,7 @@ impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
 /// If the layout overhead of the struct / tuple must be avoided, this variant of is an alternative.
 /// This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BoomHashMap2<K: Hash, D1, D2> {
     mphf: Mphf<K>,
@@ -321,6 +338,26 @@ where
     }
 }
 
+impl<K, D1, D2> core::iter::FromIterator<(K, D1, D2)> for BoomHashMap2<K, D1, D2>
+where
+    K: Hash + Debug + PartialEq,
+    D1: Debug,
+    D2: Debug,
+{
+    fn from_iter<I: IntoIterator<Item = (K, D1, D2)>>(iter: I) -> Self {
+        let mut keys = Vec::new();
+        let mut values1 = Vec::new();
+        let mut values2 = Vec::new();
+
+        for (k, v1, v2) in iter {
+            keys.push(k);
+            values1.push(v1);
+            values2.push(v2);
+        }
+        Self::new(keys, values1, values2)
+    }
+}
+
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
     K: Hash + Debug + PartialEq + Send + Sync,
@@ -336,11 +373,28 @@ where
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
 /// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NoKeyBoomHashMap<K, D1> {
     pub mphf: Mphf<K>,
     pub values: Vec<D1>,
+}
+
+impl<K, D1> core::iter::FromIterator<(K, D1)> for NoKeyBoomHashMap<K, D1>
+where
+    K: Hash + Debug + PartialEq + Send + Sync,
+    D1: Debug,
+{
+    fn from_iter<I: IntoIterator<Item = (K, D1)>>(iter: I) -> Self {
+        let mut keys = Vec::new();
+        let mut values1 = Vec::new();
+
+        for (k, v1) in iter {
+            keys.push(k);
+            values1.push(v1);
+        }
+        Self::new_parallel(keys, values1)
+    }
 }
 
 impl<K, D1> NoKeyBoomHashMap<K, D1>
@@ -384,12 +438,32 @@ where
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
 /// but can only be used if you can guarantee that you will only query for keys that were in the original set.  Querying for a new key will return a random value, silently.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NoKeyBoomHashMap2<K, D1, D2> {
     pub mphf: Mphf<K>,
     pub values: Vec<D1>,
     pub aux_values: Vec<D2>,
+}
+
+impl<K, D1, D2> core::iter::FromIterator<(K, D1, D2)> for NoKeyBoomHashMap2<K, D1, D2>
+where
+    K: Hash + Debug + PartialEq + Send + Sync,
+    D1: Debug,
+    D2: Debug,
+{
+    fn from_iter<I: IntoIterator<Item = (K, D1, D2)>>(iter: I) -> Self {
+        let mut keys = Vec::new();
+        let mut values1 = Vec::new();
+        let mut values2 = Vec::new();
+
+        for (k, v1, v2) in iter {
+            keys.push(k);
+            values1.push(v1);
+            values2.push(v2);
+        }
+        Self::new_parallel(keys, values1, values2)
+    }
 }
 
 impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
