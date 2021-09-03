@@ -839,4 +839,12 @@ mod tests {
         let items = (0..1000000).map(|x| x * 2);
         assert!(check_mphf(HashSet::from_iter(items)));
     }
+
+    quickcheck! {
+        fn check_hash_large_seed(v: u64) -> bool {
+            hash_with_seed(u64::max_value(), &v);
+            // Returning true because just checking if it doesn't panic
+            true
+        }
+    }
 }
