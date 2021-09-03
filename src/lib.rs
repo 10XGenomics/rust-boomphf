@@ -55,7 +55,9 @@ fn fold(v: u64) -> u32 {
 
 #[inline]
 fn hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
-    let mut state = wyhash::WyHash::with_seed(1 << (iter + iter));
+    let mut state = wyhash::WyHash::with_seed(
+        1u64.rotate_left(u64::min(iter.saturating_add(iter), u32::max_value() as u64) as u32),
+    );
     v.hash(&mut state);
     state.finish()
 }
@@ -679,6 +681,8 @@ mod tests {
     use std::collections::HashSet;
     use std::iter::FromIterator;
 
+    use quickcheck::TestResult;
+
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
@@ -845,6 +849,21 @@ mod tests {
             hash_with_seed(u64::max_value(), &v);
             // Returning true because just checking if it doesn't panic
             true
+        }
+    }
+
+    quickcheck! {
+        fn check_wyhash_previous(iter: u8, v: u64) -> TestResult {
+            fn prev_hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
+                let mut state = wyhash::WyHash::with_seed(1 << (iter + iter));
+                v.hash(&mut state);
+                state.finish()
+            }
+
+            if iter > 31 {
+                return TestResult::discard();
+            }
+            TestResult::from_bool(hash_with_seed(iter as u64, &v) == prev_hash_with_seed(iter as u64, &v))
         }
     }
 }
