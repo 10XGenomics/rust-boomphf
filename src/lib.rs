@@ -34,7 +34,7 @@ use rayon::prelude::*;
 mod bitvector;
 pub mod hashmap;
 mod par_iter;
-use bitvector::*;
+use bitvector::BitVector;
 
 use log::error;
 use std::borrow::Borrow;
@@ -236,8 +236,8 @@ impl<T: Hash + Debug> Mphf<T> {
             iter,
         );
 
-        (&objects).iter().for_each(|v| cx.find_collisions_sync(v));
-        let mut redo_keys = (&objects)
+        objects.iter().for_each(|v| cx.find_collisions_sync(v));
+        let mut redo_keys = objects
             .iter()
             .filter_map(|v| cx.filter(v))
             .collect::<Vec<_>>();
@@ -366,10 +366,8 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
             starting_seed.unwrap_or(0) + iter,
         );
 
-        (&objects)
-            .into_par_iter()
-            .for_each(|v| cx.find_collisions(v));
-        let mut redo_keys = (&objects)
+        objects.into_par_iter().for_each(|v| cx.find_collisions(v));
+        let mut redo_keys = objects
             .into_par_iter()
             .filter_map(|v| cx.filter(v))
             .collect::<Vec<_>>();
@@ -684,29 +682,24 @@ mod tests {
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
-        let mut xsv: Vec<T> = Vec::new();
-        xsv.extend(xs.into_iter());
+        let xsv: Vec<T> = xs.into_iter().collect();
 
         // test single-shot data input
         check_mphf_serial(&xsv) && check_mphf_parallel(&xsv)
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_serial<T>(xsv: &Vec<T>) -> bool
+    fn check_mphf_serial<T>(xsv: &[T]) -> bool
     where
         T: Hash + PartialEq + Eq + Debug,
     {
         // Generate the MPHF
-        let phf = Mphf::new(1.7, &xsv);
+        let phf = Mphf::new(1.7, xsv);
 
         // Hash all the elements of xs
-        let mut hashes = Vec::new();
+        let mut hashes: Vec<u64> = xsv.iter().map(|v| phf.hash(v)).collect();
 
-        for v in xsv {
-            hashes.push(phf.hash(&v));
-        }
-
-        hashes.sort();
+        hashes.sort_unstable();
 
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..xsv.len() as u64).collect();
@@ -714,21 +707,17 @@ mod tests {
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
-    fn check_mphf_parallel<T>(xsv: &Vec<T>) -> bool
+    fn check_mphf_parallel<T>(xsv: &[T]) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         // Generate the MPHF
-        let phf = Mphf::new_parallel(1.7, &xsv, None);
+        let phf = Mphf::new_parallel(1.7, xsv, None);
 
         // Hash all the elements of xs
-        let mut hashes = Vec::new();
+        let mut hashes: Vec<u64> = xsv.iter().map(|v| phf.hash(v)).collect();
 
-        for v in xsv {
-            hashes.push(phf.hash(&v));
-        }
-
-        hashes.sort();
+        hashes.sort_unstable();
 
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..xsv.len() as u64).collect();
@@ -742,13 +731,12 @@ mod tests {
         let phf = Mphf::from_chunked_iterator(1.7, &values, total);
 
         // Hash all the elements of xs
-        let mut hashes = Vec::new();
+        let mut hashes: Vec<u64> = values
+            .iter()
+            .flat_map(|x| x.iter().map(|v| phf.hash(&v)))
+            .collect();
 
-        for v in values.iter().flat_map(|x| x) {
-            hashes.push(phf.hash(&v));
-        }
-
-        hashes.sort();
+        hashes.sort_unstable();
 
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..total as u64).collect();
@@ -762,13 +750,12 @@ mod tests {
         let phf = Mphf::from_chunked_iterator_parallel(1.7, &values, None, total, 2);
 
         // Hash all the elements of xs
-        let mut hashes = Vec::new();
+        let mut hashes: Vec<u64> = values
+            .iter()
+            .flat_map(|x| x.iter().map(|v| phf.hash(&v)))
+            .collect();
 
-        for v in values.iter().flat_map(|x| x) {
-            hashes.push(phf.hash(&v));
-        }
-
-        hashes.sort();
+        hashes.sort_unstable();
 
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..total as u64).collect();
@@ -781,7 +768,7 @@ mod tests {
             let mut lens = lens;
 
             let items: Vec<u64> = v.iter().cloned().collect();
-            if lens.len() == 0 || lens.iter().all(|x| *x == 0) {
+            if lens.is_empty() || lens.iter().all(|x| *x == 0) {
                 lens.clear();
                 lens.push(items.len())
             }
