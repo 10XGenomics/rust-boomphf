@@ -411,12 +411,12 @@ mod tests {
     #[test]
     fn eq_left() {
         let bitvec = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
-            bitvec.insert(i);
+        for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
+            bitvec.insert(*i);
         }
         let bitvec2 = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
-            bitvec2.insert(i);
+        for i in &[0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
+            bitvec2.insert(*i);
         }
 
         assert!(bitvec.eq_left(&bitvec2, 1));
@@ -434,16 +434,16 @@ mod tests {
     #[test]
     fn eq() {
         let bitvec = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
-            bitvec.insert(i);
+        for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
+            bitvec.insert(*i);
         }
         let bitvec2 = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
-            bitvec2.insert(i);
+        for i in &[0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
+            bitvec2.insert(*i);
         }
         let bitvec3 = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
-            bitvec3.insert(i);
+        for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
+            bitvec3.insert(*i);
         }
 
         assert!(bitvec != bitvec2);
@@ -454,8 +454,8 @@ mod tests {
     #[test]
     fn remove() {
         let bitvec = BitVector::new(50);
-        for i in vec![0, 1, 3, 5, 11, 12, 19, 23] {
-            bitvec.insert(i);
+        for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
+            bitvec.insert(*i);
         }
         assert!(bitvec.contains(3));
         bitvec.remove(3);

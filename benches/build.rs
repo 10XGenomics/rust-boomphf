@@ -2,11 +2,9 @@
 #[macro_use]
 extern crate bencher;
 
-extern crate boomphf;
-
 use bencher::Bencher;
 
-use boomphf::*;
+use boomphf::Mphf;
 
 fn build1_ser(bench: &mut Bencher) {
     bench.iter(|| {

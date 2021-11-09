@@ -71,7 +71,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let maybe_pos = self.mphf.try_hash(&kmer);
+        let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
@@ -298,7 +298,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let maybe_pos = self.mphf.try_hash(&kmer);
+        let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
@@ -515,9 +515,6 @@ where
         Q: Hash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
-        match maybe_pos {
-            Some(pos) => Some((&self.values[pos as usize], &self.aux_values[pos as usize])),
-            _ => None,
-        }
+        maybe_pos.map(|pos| (&self.values[pos as usize], &self.aux_values[pos as usize]))
     }
 }

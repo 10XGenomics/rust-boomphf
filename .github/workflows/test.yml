@@ -10,6 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-18.04
     steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.55.0
+          default: true
+          components: rustfmt, clippy
       - name: Checkout Git repository
         uses: actions/checkout@master
       - name: Cache cargo registry
@@ -29,5 +34,21 @@ jobs:
           key: ${{runner.os}}-cargo-build-target-${{hashFiles('**/Cargo.lock')}}
       - name: Check Rust formatting
         run: cargo fmt -- --check
+      - name: lint with clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: |
+            --all-targets --
+            -W clippy::wildcard_imports
+            -W clippy::redundant_closure_for_method_calls
+            -W clippy::enum_glob_use
+            -A clippy::float_cmp
+            -D clippy::unused_io_amount
+            -W future_incompatible
+            -W nonstandard_style
+            -W rust_2018_compatibility
+            -W rust_2021_compatibility
+            -W unused
       - name: Run Rust tests
         run: cargo test --release
