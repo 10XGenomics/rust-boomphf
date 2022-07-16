@@ -1,35 +1,87 @@
-#[cfg(test)]
-#[macro_use]
-extern crate bencher;
+use std::collections::HashMap;
+use std::iter::FromIterator;
 
-use bencher::Bencher;
+use criterion::{self, criterion_group, criterion_main, Criterion};
 
+use boomphf::hashmap::BoomHashMap;
 use boomphf::Mphf;
 
-fn build1_ser(bench: &mut Bencher) {
-    bench.iter(|| {
-        let items: Vec<u64> = (0..1000000u64).map(|x| x * 2).collect();
-        let _ = Mphf::new(2.0, &items);
+const UPPER_BOUND: u64 = 1000000;
+
+fn build(c: &mut Criterion) {
+    let mut group = c.benchmark_group("build");
+    let keys: Vec<u64> = (0..UPPER_BOUND).map(|x| x * 2).collect();
+    let values: Vec<u64> = (0..UPPER_BOUND).collect();
+
+    group.bench_function("boomphf_serial", |b| {
+        b.iter(|| {
+            criterion::black_box(Mphf::new(2.0, &keys));
+        });
+    });
+
+    group.bench_function("boomphf_parallel", |b| {
+        b.iter(|| {
+            criterion::black_box(Mphf::new_parallel(2.0, &keys, None));
+        });
+    });
+
+    group.bench_function("boomphf_hashmap", |b| {
+        b.iter(|| {
+            criterion::black_box({
+                let _: BoomHashMap<u64, u64> = BoomHashMap::new(keys.clone(), values.clone());
+            });
+        });
+    });
+
+    group.bench_function("hashmap", |b| {
+        b.iter(|| {
+            criterion::black_box({
+                let _: HashMap<u64, u64> =
+                    HashMap::from_iter(keys.iter().cloned().zip(values.iter().cloned()));
+            });
+        });
     });
 }
 
-fn build1_par(bench: &mut Bencher) {
-    bench.iter(|| {
-        let items: Vec<u64> = (0..1000000u64).map(|x| x * 2).collect();
-        let _ = Mphf::new_parallel(2.0, &items, None);
-    });
-}
-
-fn scan1_ser(bench: &mut Bencher) {
-    let items: Vec<u64> = (0..1000000u64).map(|x| x * 2).collect();
+fn scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scan_hashes");
+    let items: Vec<u64> = (0..UPPER_BOUND).map(|x| x * 2).collect();
     let phf = Mphf::new(2.0, &items);
 
-    bench.iter(|| {
-        for i in (0..1000000u64).map(|x| x * 2) {
-            phf.hash(&i);
-        }
+    group.bench_function("boomphf_scan", |b| {
+        b.iter(|| {
+            for i in (0..UPPER_BOUND).map(|x| x * 2) {
+                phf.hash(&i);
+            }
+        });
     });
 }
 
-benchmark_group!(benches, build1_ser, build1_par, scan1_ser);
-benchmark_main!(benches);
+fn lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lookup");
+    let keys: Vec<u64> = (0..UPPER_BOUND).map(|x| x * 2).collect();
+    let values: Vec<u64> = (0..UPPER_BOUND).collect();
+
+    let hashmap: HashMap<u64, u64> =
+        HashMap::from_iter(keys.iter().cloned().zip(values.iter().cloned()));
+    let boom_hashmap = BoomHashMap::new(keys, values);
+
+    group.bench_function("hashmap", |b| {
+        b.iter(|| {
+            for k in (0..UPPER_BOUND).map(|x| x * 2) {
+                criterion::black_box(hashmap.get(&k));
+            }
+        });
+    });
+
+    group.bench_function("boomphf_hashmap", |b| {
+        b.iter(|| {
+            for k in (0..UPPER_BOUND).map(|x| x * 2) {
+                criterion::black_box(boom_hashmap.get(&k));
+            }
+        });
+    });
+}
+
+criterion_group!(benches, build, scan, lookup,);
+criterion_main!(benches);

@@ -21,7 +21,7 @@ log = "0.4.*"
 
 [dev-dependencies]
 quickcheck = "1.0.2"
-bencher = ">=0.1"
+criterion = ">=0.3"
 
 [[bench]]
 name = "build"
