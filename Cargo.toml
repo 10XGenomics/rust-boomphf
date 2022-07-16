@@ -9,7 +9,7 @@ description = "Scalable and Efficient Minimal Perfect Hash Functions"
 documentation = "https://10xgenomics.github.io/rust-boomphf/master/boomphf/index.html"
 readme = "README.md"
 keywords = ["hashing", "minimal", "perfect"]
-edition = "2018"
+edition = "2021"
 include = ["src/**/*", "LICENSE", "README.md"]
 
 [dependencies]

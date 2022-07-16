@@ -14,10 +14,15 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        rust:
+          - "1.56.0"
+          - "1.62.0"
     steps:
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: 1.55.0
+          toolchain: ${{ matrix.rust }}
           default: true
           components: rustfmt, clippy
       - name: Checkout Git repository
@@ -31,16 +36,17 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: |
-            --all-targets --
-            -W clippy::wildcard_imports
-            -W clippy::redundant_closure_for_method_calls
-            -W clippy::enum_glob_use
+            --all-targets --all-features --
+            -D clippy::perf
+            -D clippy::wildcard_imports
+            -D clippy::redundant_closure_for_method_calls
+            -D clippy::enum_glob_use
             -A clippy::float_cmp
-            -D clippy::unused_io_amount
+            -F clippy::unused_io_amount
             -W future_incompatible
-            -W nonstandard_style
-            -W rust_2018_compatibility
-            -W rust_2021_compatibility
-            -W unused
+            -D nonstandard_style
+            -D rust_2018_compatibility
+            -D rust_2021_compatibility
+            -D unused
       - name: Run Rust tests
         run: cargo test --release

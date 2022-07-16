@@ -44,13 +44,13 @@ pub struct BitVector {
 
 // Custom serializer
 #[cfg(feature = "serde")]
-fn ser_atomic_vec<S>(v: &Box<[AtomicUsize]>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_atomic_vec<S>(v: &[AtomicUsize], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     use serde::ser::SerializeSeq;
     let mut seq = serializer.serialize_seq(Some(v.len()))?;
-    for ref x in v.iter() {
+    for x in v {
         seq.serialize_element(&x.load(Ordering::SeqCst))?;
     }
     seq.end()
