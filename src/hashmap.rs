@@ -588,11 +588,7 @@ where
         }
     }
 
-    pub fn new(
-        keys: Vec<K>,
-        values: Vec<D1>,
-        aux_values: Vec<D2>,
-    ) -> NoKeyBoomHashMap2<K, D1, D2> {
+    pub fn new(keys: Vec<K>, values: Vec<D1>, aux_values: Vec<D2>) -> NoKeyBoomHashMap2<K, D1, D2> {
         let mphf = Mphf::new(1.7, &keys);
         Self::create_map(mphf, keys, values, aux_values)
     }

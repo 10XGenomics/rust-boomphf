@@ -362,6 +362,7 @@ impl<T: Hash + Debug> Mphf<T> {
 impl<T: Hash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
+    #[cfg(feature = "parallel")]
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
         assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
@@ -538,6 +539,7 @@ where
 #[cfg(feature = "parallel")]
 impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
+    #[cfg(feature = "parallel")]
     pub fn from_chunked_iterator_parallel<I, N>(
         gamma: f64,
         objects: &'a I,
