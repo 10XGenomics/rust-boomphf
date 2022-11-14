@@ -13,7 +13,9 @@ fn build1_ser(bench: &mut Bencher) {
     });
 }
 
+#[allow(dead_code)]
 fn build1_par(bench: &mut Bencher) {
+    #[cfg(feature = "parallel")]
     bench.iter(|| {
         let items: Vec<u64> = (0..1000000u64).map(|x| x * 2).collect();
         let _ = Mphf::new_parallel(2.0, &items, None);

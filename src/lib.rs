@@ -120,7 +120,8 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     {
         let mut iter = 0;
         let mut bitvecs = Vec::new();
-        let done_keys = BitVector::new(std::cmp::max(255, n));
+        #[allow(unused_mut)]
+        let mut done_keys = BitVector::new(std::cmp::max(255, n));
 
         assert!(gamma > 1.01);
 
@@ -357,10 +358,10 @@ impl<T: Hash + Debug> Mphf<T> {
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<T: Hash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
-    #[cfg(feature = "parallel")]
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
         assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
@@ -442,7 +443,19 @@ impl Context {
         }
     }
 
+    #[cfg(feature = "parallel")]
     fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if self.collide.contains(idx) {
+            self.a.remove(idx);
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn filter<'t, T: Hash>(&mut self, v: &'t T) -> Option<&'t T> {
         let idx = hashmod(self.seed, v, self.size) as usize;
         if self.collide.contains(idx) {
             self.a.remove(idx);
@@ -522,9 +535,9 @@ where
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
-    #[cfg(feature = "parallel")]
     pub fn from_chunked_iterator_parallel<I, N>(
         gamma: f64,
         objects: &'a I,
