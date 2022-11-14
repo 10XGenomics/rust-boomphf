@@ -65,6 +65,26 @@ where
         }
     }
 
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.borrow() {
+                    Some(&mut self.values[pos as usize])
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     /// Get the position in the Mphf of a key, if the key exists.
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
@@ -293,6 +313,28 @@ where
         }
     }
 
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.borrow() {
+                    Some((
+                        &mut self.values[pos as usize],
+                        &mut self.aux_values[pos as usize],
+                    ))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
@@ -434,6 +476,19 @@ where
             _ => None,
         }
     }
+
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D1>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => Some(&mut self.values[pos as usize]),
+            _ => None,
+        }
+    }
 }
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
@@ -516,5 +571,15 @@ where
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         maybe_pos.map(|pos| (&self.values[pos as usize], &self.aux_values[pos as usize]))
+    }
+
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        maybe_pos.map(|pos| (&mut self.values[pos as usize], &mut self.aux_values[pos as usize]))
     }
 }
