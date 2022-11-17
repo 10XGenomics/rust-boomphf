@@ -25,25 +25,36 @@
 //!
 
 use std::fmt;
+#[cfg(feature = "parallel")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
+
+#[cfg(feature = "parallel")]
+type Word = AtomicUsize;
+
+#[cfg(not(feature = "parallel"))]
+type Word = usize;
 
 /// Bitvector
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitVector {
     bits: usize,
+    #[cfg(feature = "parallel")]
     #[cfg_attr(
         feature = "serde",
         serde(serialize_with = "ser_atomic_vec", deserialize_with = "de_atomic_vec")
     )]
     vector: Box<[AtomicUsize]>,
+
+    #[cfg(not(feature = "parallel"))]
+    vector: Box<[usize]>,
 }
 
 // Custom serializer
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", feature = "parallel"))]
 fn ser_atomic_vec<S>(v: &[AtomicUsize], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -57,7 +68,7 @@ where
 }
 
 // Custom deserializer
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", feature = "parallel"))]
 pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Box<[AtomicUsize]>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -91,11 +102,14 @@ impl core::clone::Clone for BitVector {
     fn clone(&self) -> Self {
         Self {
             bits: self.bits,
+            #[cfg(feature = "parallel")]
             vector: self
                 .vector
                 .iter()
                 .map(|x| AtomicUsize::new(x.load(Ordering::SeqCst)))
                 .collect(),
+            #[cfg(not(feature = "parallel"))]
+            vector: self.vector.clone(),
         }
     }
 }
@@ -120,8 +134,14 @@ impl PartialEq for BitVector {
     }
 }
 
-fn to_au(v: usize) -> AtomicUsize {
+#[cfg(feature = "parallel")]
+fn to_word(v: usize) -> AtomicUsize {
     AtomicUsize::new(v)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn to_word(v: usize) -> usize {
+    v
 }
 
 impl BitVector {
@@ -130,7 +150,7 @@ impl BitVector {
         let n = u64s(bits);
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            v.push(to_au(0));
+            v.push(to_word(0));
         }
 
         BitVector {
@@ -148,10 +168,10 @@ impl BitVector {
         let (word, offset) = word_offset(bits);
         let mut bvec = Vec::with_capacity(word + 1);
         for _ in 0..word {
-            bvec.push(to_au(usize::max_value()));
+            bvec.push(to_word(usize::max_value()));
         }
 
-        bvec.push(to_au(usize::max_value() >> (64 - offset)));
+        bvec.push(to_word(usize::max_value() >> (64 - offset)));
         BitVector {
             bits,
             vector: bvec.into_boxed_slice(),
@@ -166,13 +186,21 @@ impl BitVector {
     /// This method is averagely faster than `self.len() > 0`.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.vector.iter().all(|x| x.load(Ordering::Relaxed) == 0)
+        #[cfg(feature = "parallel")]
+        return self.vector.iter().all(|x| x.load(Ordering::Relaxed) == 0);
+
+        #[cfg(not(feature = "parallel"))]
+        return self.vector.iter().all(|x| *x == 0);
     }
 
     /// the number of elements in set
     pub fn len(&self) -> usize {
         self.vector.iter().fold(0usize, |x0, x| {
-            x0 + x.load(Ordering::Relaxed).count_ones() as usize
+            #[cfg(feature = "parallel")]
+            return x0 + x.load(Ordering::Relaxed).count_ones() as usize;
+
+            #[cfg(not(feature = "parallel"))]
+            return x0 + x.count_ones() as usize;
         })
     }
 
@@ -212,7 +240,13 @@ impl BitVector {
             .iter()
             .zip(other.vector.iter())
             .take(word)
-            .all(|(s1, s2)| s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed))
+            .all(|(s1, s2)| {
+                #[cfg(feature = "parallel")]
+                return s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed);
+
+                #[cfg(not(feature = "parallel"))]
+                return s1 == s2;
+            })
             && (self.get_word(word) << (63 - offset)) == (other.get_word(word) << (63 - offset))
     }
 
@@ -223,11 +257,23 @@ impl BitVector {
     ///
     /// Insert, remove and contains do not do bound check.
     #[inline]
+    #[cfg(feature = "parallel")]
     pub fn insert(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &self.vector[word];
 
         let prev = data.fetch_or(mask, Ordering::Relaxed);
+        prev & mask == 0
+    }
+
+    #[inline]
+    #[cfg(not(feature = "parallel"))]
+    pub fn insert(&mut self, bit: usize) -> bool {
+        let (word, mask) = word_mask(bit);
+        let data = &mut self.vector[word];
+
+        let prev = *data;
+        *data = *data | mask;
         prev & mask == 0
     }
 
@@ -243,7 +289,10 @@ impl BitVector {
     #[inline]
     pub fn insert_sync(&mut self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
+        #[cfg(feature = "parallel")]
         let data = self.vector[word].get_mut();
+        #[cfg(not(feature = "parallel"))]
+        let data = &mut self.vector[word];
 
         let old_data = *data;
         *data |= mask;
@@ -256,6 +305,7 @@ impl BitVector {
     /// if value doesn't exist in set, return false.
     ///
     /// Insert, remove and contains do not do bound check.
+    #[cfg(feature = "parallel")]
     pub fn remove(&self, bit: usize) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &self.vector[word];
@@ -264,11 +314,22 @@ impl BitVector {
         prev & mask != 0
     }
 
+    #[cfg(not(feature = "parallel"))]
+    pub fn remove(&mut self, bit: usize) -> bool {
+        let (word, mask) = word_mask(bit);
+        let data = &mut self.vector[word];
+
+        let prev = *data;
+        *data = *data & !mask;
+        prev & mask != 0
+    }
+
     /// import elements from another bitvector
     ///
     /// If any new value is inserted, return true,
     /// else return false.
     #[allow(dead_code)]
+    #[cfg(feature = "parallel")]
     pub fn insert_all(&self, all: &BitVector) -> bool {
         assert!(self.vector.len() == all.vector.len());
         let mut changed = false;
@@ -280,6 +341,25 @@ impl BitVector {
                 changed = true;
             }
         }
+
+        changed
+    }
+
+    #[allow(dead_code)]
+    #[cfg(not(feature = "parallel"))]
+    pub fn insert_all(&mut self, all: &BitVector) -> bool {
+        assert!(self.vector.len() == all.vector.len());
+        let mut changed = false;
+
+        for (i, j) in self.vector.iter_mut().zip(all.vector.iter()) {
+            let prev = *i;
+            *i |= *j;
+
+            if prev != *i {
+                changed = true;
+            }
+        }
+
         changed
     }
 
@@ -290,7 +370,11 @@ impl BitVector {
 
     #[inline]
     pub fn get_word(&self, word: usize) -> u64 {
-        self.vector[word].load(Ordering::Relaxed) as u64
+        #[cfg(feature = "parallel")]
+        return self.vector[word].load(Ordering::Relaxed) as u64;
+
+        #[cfg(not(feature = "parallel"))]
+        return self.vector[word] as u64;
     }
 
     pub fn num_words(&self) -> usize {
@@ -310,7 +394,7 @@ impl BitVector {
 
 /// Iterator for BitVector
 pub struct BitVectorIter<'a> {
-    iter: ::std::slice::Iter<'a, AtomicUsize>,
+    iter: ::std::slice::Iter<'a, Word>,
     current: usize,
     idx: usize,
     size: usize,
@@ -324,7 +408,10 @@ impl<'a> Iterator for BitVectorIter<'a> {
         }
         while self.current == 0 {
             self.current = if let Some(_i) = self.iter.next() {
+                #[cfg(feature = "parallel")]
                 let i = _i.load(Ordering::Relaxed);
+                #[cfg(not(feature = "parallel"))]
+                let i = *_i;
                 if i == 0 {
                     self.idx += 64;
                     continue;
@@ -364,8 +451,10 @@ mod tests {
     use super::*;
     #[test]
     fn union_two_vecs() {
-        let vec1 = BitVector::new(65);
-        let vec2 = BitVector::new(65);
+        #[allow(unused_mut)]
+        let mut vec1 = BitVector::new(65);
+        #[allow(unused_mut)]
+        let mut vec2 = BitVector::new(65);
         assert!(vec1.insert(3));
         assert!(!vec1.insert(3));
         assert!(vec2.insert(5));
@@ -381,7 +470,8 @@ mod tests {
 
     #[test]
     fn bitvec_iter_works() {
-        let bitvec = BitVector::new(100);
+        #[allow(unused_mut)]
+        let mut bitvec = BitVector::new(100);
         bitvec.insert(1);
         bitvec.insert(10);
         bitvec.insert(19);
@@ -399,7 +489,8 @@ mod tests {
 
     #[test]
     fn bitvec_iter_works_2() {
-        let bitvec = BitVector::new(319);
+        #[allow(unused_mut)]
+        let mut bitvec = BitVector::new(319);
         bitvec.insert(0);
         bitvec.insert(127);
         bitvec.insert(191);
@@ -410,11 +501,13 @@ mod tests {
 
     #[test]
     fn eq_left() {
-        let bitvec = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec = BitVector::new(50);
         for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(*i);
         }
-        let bitvec2 = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec2 = BitVector::new(50);
         for i in &[0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
             bitvec2.insert(*i);
         }
@@ -433,15 +526,18 @@ mod tests {
 
     #[test]
     fn eq() {
-        let bitvec = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec = BitVector::new(50);
         for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(*i);
         }
-        let bitvec2 = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec2 = BitVector::new(50);
         for i in &[0, 1, 3, 5, 7, 11, 13, 17, 19, 23] {
             bitvec2.insert(*i);
         }
-        let bitvec3 = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec3 = BitVector::new(50);
         for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec3.insert(*i);
         }
@@ -453,7 +549,8 @@ mod tests {
 
     #[test]
     fn remove() {
-        let bitvec = BitVector::new(50);
+        #[allow(unused_mut)]
+        let mut bitvec = BitVector::new(50);
         for i in &[0, 1, 3, 5, 11, 12, 19, 23] {
             bitvec.insert(*i);
         }
@@ -470,7 +567,8 @@ mod tests {
     fn is_empty() {
         assert!(!BitVector::ones(60).is_empty());
         assert!(!BitVector::ones(65).is_empty());
-        let bvec = BitVector::new(60);
+        #[allow(unused_mut)]
+        let mut bvec = BitVector::new(60);
 
         assert!(bvec.is_empty());
 
@@ -478,7 +576,8 @@ mod tests {
         assert!(!bvec.is_empty());
         bvec.remove(5);
         assert!(bvec.is_empty());
-        let bvec = BitVector::ones(65);
+        #[allow(unused_mut)]
+        let mut bvec = BitVector::ones(65);
         for i in 0..65 {
             bvec.remove(i);
         }
@@ -499,7 +598,8 @@ mod tests {
         assert_eq!(BitVector::ones(60).len(), 60);
         assert_eq!(BitVector::ones(65).len(), 65);
         assert_eq!(BitVector::new(65).len(), 0);
-        let bvec = BitVector::new(60);
+        #[allow(unused_mut)]
+        let mut bvec = BitVector::new(60);
         bvec.insert(5);
         assert_eq!(bvec.len(), 1);
         bvec.insert(6);
@@ -518,8 +618,10 @@ mod bench {
     #[bench]
     fn bench_bitset_operator(b: &mut Bencher) {
         b.iter(|| {
-            let vec1 = BitVector::new(65);
-            let vec2 = BitVector::new(65);
+            #[allow(unused_mut)]
+            let mut vec1 = BitVector::new(65);
+            #[allow(unused_mut)]
+            let mut vec2 = BitVector::new(65);
             for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
                 vec1.insert(i);
             }
@@ -535,7 +637,9 @@ mod bench {
     #[bench]
     fn bench_bitset_operator_inplace(b: &mut Bencher) {
         b.iter(|| {
+            #[allow(unused_mut)]
             let mut vec1 = BitVector::new(65);
+            #[allow(unused_mut)]
             let mut vec2 = BitVector::new(65);
             for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
                 vec1.insert(i);
@@ -552,7 +656,9 @@ mod bench {
     #[bench]
     fn bench_hashset_operator(b: &mut Bencher) {
         b.iter(|| {
+            #[allow(unused_mut)]
             let mut vec1 = HashSet::with_capacity(65);
+            #[allow(unused_mut)]
             let mut vec2 = HashSet::with_capacity(65);
             for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
                 vec1.insert(i);
@@ -570,7 +676,9 @@ mod bench {
     #[bench]
     fn bench_btreeset_operator(b: &mut Bencher) {
         b.iter(|| {
+            #[allow(unused_mut)]
             let mut vec1 = BTreeSet::new();
+            #[allow(unused_mut)]
             let mut vec2 = BTreeSet::new();
             for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
                 vec1.insert(i);

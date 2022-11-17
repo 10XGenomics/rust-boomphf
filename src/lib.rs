@@ -29,10 +29,12 @@
 //! assert!(hashes == expected_hashes)
 //! ```
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 mod bitvector;
 pub mod hashmap;
+#[cfg(feature = "parallel")]
 mod par_iter;
 use bitvector::BitVector;
 
@@ -42,7 +44,9 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
+#[cfg(feature = "parallel")]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(feature = "parallel")]
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "serde")]
@@ -116,7 +120,8 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     {
         let mut iter = 0;
         let mut bitvecs = Vec::new();
-        let done_keys = BitVector::new(std::cmp::max(255, n));
+        #[allow(unused_mut)]
+        let mut done_keys = BitVector::new(std::cmp::max(255, n));
 
         assert!(gamma > 1.01);
 
@@ -353,9 +358,11 @@ impl<T: Hash + Debug> Mphf<T> {
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<T: Hash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
+    #[cfg(feature = "parallel")]
     pub fn new_parallel(gamma: f64, objects: &[T], starting_seed: Option<u64>) -> Mphf<T> {
         assert!(gamma > 1.01);
         let mut bitvecs = Vec::new();
@@ -422,6 +429,7 @@ impl Context {
         }
     }
 
+    #[cfg(feature = "parallel")]
     fn find_collisions<T: Hash>(&self, v: &T) {
         let idx = hashmod(self.seed, v, self.size) as usize;
         if !self.collide.contains(idx) && !self.a.insert(idx) {
@@ -436,7 +444,19 @@ impl Context {
         }
     }
 
+    #[cfg(feature = "parallel")]
     fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
+        let idx = hashmod(self.seed, v, self.size) as usize;
+        if self.collide.contains(idx) {
+            self.a.remove(idx);
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn filter<'t, T: Hash>(&mut self, v: &'t T) -> Option<&'t T> {
         let idx = hashmod(self.seed, v, self.size) as usize;
         if self.collide.contains(idx) {
             self.a.remove(idx);
@@ -447,6 +467,7 @@ impl Context {
     }
 }
 
+#[cfg(feature = "parallel")]
 struct Queue<'a, I: 'a, T>
 where
     &'a I: IntoIterator,
@@ -463,6 +484,7 @@ where
     phantom_t: PhantomData<T>,
 }
 
+#[cfg(feature = "parallel")]
 impl<'a, I: 'a, N1, N2, T> Queue<'a, I, T>
 where
     &'a I: IntoIterator<Item = N1>,
@@ -514,8 +536,10 @@ where
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
+    #[cfg(feature = "parallel")]
     pub fn from_chunked_iterator_parallel<I, N>(
         gamma: f64,
         objects: &'a I,
@@ -648,6 +672,7 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     }
 }
 
+#[cfg(feature = "parallel")]
 struct IterContext<'a, I: 'a, N1, N2, T>
 where
     &'a I: IntoIterator<Item = N1>,
@@ -660,6 +685,7 @@ where
     a: BitVector,
 }
 
+#[cfg(feature = "parallel")]
 struct GlobalContext<T> {
     done_keys: BitVector,
     buffered_keys: Mutex<Vec<T>>,
@@ -707,6 +733,7 @@ mod tests {
     }
 
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
+    #[cfg(feature = "parallel")]
     fn check_mphf_parallel<T>(xsv: &[T]) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
@@ -722,6 +749,14 @@ mod tests {
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..xsv.len() as u64).collect();
         hashes == gt
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn check_mphf_parallel<T>(_xsv: &[T]) -> bool
+    where
+        T: Hash + PartialEq + Eq + Debug,
+    {
+        true
     }
 
     fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: usize) -> bool
@@ -743,6 +778,7 @@ mod tests {
         hashes == gt
     }
 
+    #[cfg(feature = "parallel")]
     fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: usize) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
@@ -760,6 +796,14 @@ mod tests {
         // Hashes must equal 0 .. n
         let gt: Vec<u64> = (0..total as u64).collect();
         hashes == gt
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn check_chunked_mphf_parallel<T>(_values: Vec<Vec<T>>, _total: usize) -> bool
+    where
+        T: Sync + Hash + PartialEq + Eq + Debug + Send,
+    {
+        true
     }
 
     quickcheck! {

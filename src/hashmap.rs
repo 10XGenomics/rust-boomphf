@@ -65,6 +65,26 @@ where
         }
     }
 
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.borrow() {
+                    Some(&mut self.values[pos as usize])
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     /// Get the position in the Mphf of a key, if the key exists.
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
@@ -128,6 +148,19 @@ where
     }
 }
 
+#[cfg(feature = "parallel")]
+pub trait ConstructibleKey: Hash + Debug + PartialEq + Send + Sync {}
+
+#[cfg(feature = "parallel")]
+impl<T> ConstructibleKey for T where T: Hash + Debug + PartialEq + Send + Sync {}
+
+#[cfg(not(feature = "parallel"))]
+pub trait ConstructibleKey: Hash + Debug + PartialEq {}
+
+#[cfg(not(feature = "parallel"))]
+impl<T> ConstructibleKey for T where T: Hash + Debug + PartialEq {}
+
+#[cfg(feature = "parallel")]
 impl<K, D> BoomHashMap<K, D>
 where
     K: Hash + Debug + PartialEq + Send + Sync,
@@ -293,6 +326,28 @@ where
         }
     }
 
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.borrow() {
+                    Some((
+                        &mut self.values[pos as usize],
+                        &mut self.aux_values[pos as usize],
+                    ))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
@@ -358,6 +413,7 @@ where
     }
 }
 
+#[cfg(feature = "parallel")]
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
     K: Hash + Debug + PartialEq + Send + Sync,
@@ -382,7 +438,7 @@ pub struct NoKeyBoomHashMap<K, D1> {
 
 impl<K, D1> core::iter::FromIterator<(K, D1)> for NoKeyBoomHashMap<K, D1>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: ConstructibleKey,
     D1: Debug,
 {
     fn from_iter<I: IntoIterator<Item = (K, D1)>>(iter: I) -> Self {
@@ -393,17 +449,21 @@ where
             keys.push(k);
             values1.push(v1);
         }
-        Self::new_parallel(keys, values1)
+
+        #[cfg(feature = "parallel")]
+        return Self::new_parallel(keys, values1);
+
+        #[cfg(not(feature = "parallel"))]
+        return Self::new(keys, values1);
     }
 }
 
 impl<K, D1> NoKeyBoomHashMap<K, D1>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: ConstructibleKey,
     D1: Debug,
 {
-    pub fn new_parallel(mut keys: Vec<K>, mut values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None);
+    fn create_map(mut keys: Vec<K>, mut values: Vec<D1>, mphf: Mphf<K>) -> NoKeyBoomHashMap<K, D1> {
         for i in 0..keys.len() {
             loop {
                 let kmer_slot = mphf.hash(&keys[i]) as usize;
@@ -416,6 +476,20 @@ where
         }
 
         NoKeyBoomHashMap { mphf, values }
+    }
+
+    /// Create a new hash map from the parallel array `keys` and `values`
+    /// serially using only this thread.
+    pub fn new(keys: Vec<K>, data: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+        let mphf = Mphf::new(1.7, &keys);
+        Self::create_map(keys, data, mphf)
+    }
+
+    /// Create a new hash map from the parallel array `keys` and `values`.
+    #[cfg(feature = "parallel")]
+    pub fn new_parallel(keys: Vec<K>, values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        Self::create_map(keys, values, mphf)
     }
 
     pub fn new_with_mphf(mphf: Mphf<K>, values: Vec<D1>) -> NoKeyBoomHashMap<K, D1> {
@@ -434,6 +508,19 @@ where
             _ => None,
         }
     }
+
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D1>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => Some(&mut self.values[pos as usize]),
+            _ => None,
+        }
+    }
 }
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. *Keys are not stored* - this can greatly improve the memory consumption,
@@ -448,7 +535,7 @@ pub struct NoKeyBoomHashMap2<K, D1, D2> {
 
 impl<K, D1, D2> core::iter::FromIterator<(K, D1, D2)> for NoKeyBoomHashMap2<K, D1, D2>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: ConstructibleKey,
     D1: Debug,
     D2: Debug,
 {
@@ -462,22 +549,27 @@ where
             values1.push(v1);
             values2.push(v2);
         }
-        Self::new_parallel(keys, values1, values2)
+
+        #[cfg(feature = "parallel")]
+        return Self::new_parallel(keys, values1, values2);
+
+        #[cfg(not(feature = "parallel"))]
+        return Self::new(keys, values1, values2);
     }
 }
 
 impl<K, D1, D2> NoKeyBoomHashMap2<K, D1, D2>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: ConstructibleKey,
     D1: Debug,
     D2: Debug,
 {
-    pub fn new_parallel(
+    fn create_map(
+        mphf: Mphf<K>,
         mut keys: Vec<K>,
         mut values: Vec<D1>,
         mut aux_values: Vec<D2>,
-    ) -> NoKeyBoomHashMap2<K, D1, D2> {
-        let mphf = Mphf::new_parallel(1.7, &keys, None);
+    ) -> Self {
         for i in 0..keys.len() {
             loop {
                 let kmer_slot = mphf.hash(&keys[i]) as usize;
@@ -494,6 +586,21 @@ where
             values,
             aux_values,
         }
+    }
+
+    pub fn new(keys: Vec<K>, values: Vec<D1>, aux_values: Vec<D2>) -> NoKeyBoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new(1.7, &keys);
+        Self::create_map(mphf, keys, values, aux_values)
+    }
+
+    #[cfg(feature = "parallel")]
+    pub fn new_parallel(
+        keys: Vec<K>,
+        values: Vec<D1>,
+        aux_values: Vec<D2>,
+    ) -> NoKeyBoomHashMap2<K, D1, D2> {
+        let mphf = Mphf::new_parallel(1.7, &keys, None);
+        Self::create_map(mphf, keys, values, aux_values)
     }
 
     pub fn new_with_mphf(
@@ -516,5 +623,20 @@ where
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         maybe_pos.map(|pos| (&self.values[pos as usize], &self.aux_values[pos as usize]))
+    }
+
+    /// Get the value associated with `key` mutably, if available, otherwise return None
+    pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        maybe_pos.map(|pos| {
+            (
+                &mut self.values[pos as usize],
+                &mut self.aux_values[pos as usize],
+            )
+        })
     }
 }
