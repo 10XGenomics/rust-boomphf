@@ -50,3 +50,5 @@ jobs:
             -D unused
       - name: Run Rust tests
         run: cargo test --release
+      - name: Run Rust tests without parallelism
+        run: cargo test --release --no-default-features
