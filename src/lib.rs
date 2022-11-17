@@ -106,7 +106,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     /// `objects` must be able to be iterated over multiple times and yield the same stream of items each time.
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
     /// and the size of the datastructure representing the hash function. See the paper for details.
-    /// `max_iters` - None to never stop trying to find a perfect hash (safe if no duplicates).
+    /// `n` is the total number of items that will be produced by iterating over all the input iterators.
     /// NOTE: the inner iterator `N::IntoIter` should override `nth` if there's an efficient way to skip
     /// over items when iterating.  This is important because later iterations of the MPHF construction algorithm
     /// skip most of the items.
