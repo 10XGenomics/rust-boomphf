@@ -256,10 +256,8 @@ impl<T: Hash + Debug> Mphf<T> {
                 iter,
             );
 
-            (&redo_keys)
-                .iter()
-                .for_each(|&v| cx.find_collisions_sync(v));
-            redo_keys = (&redo_keys).iter().filter_map(|&v| cx.filter(v)).collect();
+            redo_keys.iter().for_each(|&v| cx.find_collisions_sync(v));
+            redo_keys = redo_keys.into_iter().filter_map(|v| cx.filter(v)).collect();
 
             bitvecs.push(cx.a);
             iter += 1;
