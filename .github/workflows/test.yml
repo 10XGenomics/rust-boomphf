@@ -13,26 +13,25 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         rust:
           - "1.56.0"
-          - "1.62.0"
+          - "1.65.0"
     steps:
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-          default: true
           components: rustfmt, clippy
       - name: Checkout Git repository
         uses: actions/checkout@v3
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
       - name: Check Rust formatting
         run: cargo fmt -- --check
       - name: lint with clippy
-        uses: actions-rs/clippy-check@v1
+        uses: 10XGenomics/clippy-check@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: |
