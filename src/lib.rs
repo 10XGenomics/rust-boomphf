@@ -216,7 +216,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
         }
 
         Mphf {
-            bitvecs: Self::compute_ranks(&bitvecs),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
@@ -265,12 +265,12 @@ impl<T: Hash + Debug> Mphf<T> {
         }
 
         Mphf {
-            bitvecs: Self::compute_ranks(&bitvecs),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
 
-    fn compute_ranks(bvs: &[BitVector]) -> Box<[(BitVector, Box<[u64]>)]> {
+    fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
         let mut ranks = Vec::new();
         let mut pop = 0_u64;
 
@@ -286,7 +286,7 @@ impl<T: Hash + Debug> Mphf<T> {
                 pop += v.count_ones() as u64;
             }
 
-            ranks.push((bv.clone(), rank.into_boxed_slice()))
+            ranks.push((bv, rank.into_boxed_slice()))
         }
 
         ranks.into_boxed_slice()
@@ -398,7 +398,7 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
         }
 
         Mphf {
-            bitvecs: Self::compute_ranks(&bitvecs),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
@@ -656,7 +656,7 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
         }
 
         Mphf {
-            bitvecs: Self::compute_ranks(&bitvecs),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
