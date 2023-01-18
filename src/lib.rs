@@ -91,8 +91,7 @@ fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: usize) -> u64 {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
-    bitvecs: Box<[BitVector]>,
-    ranks: Box<[Box<[u64]>]>,
+    bitvecs: Box<[(BitVector, Box<[u64]>)]>,
     phantom: PhantomData<T>,
 }
 
@@ -216,10 +215,8 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
             iter += 1;
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
-            bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
@@ -268,13 +265,12 @@ impl<T: Hash + Debug> Mphf<T> {
         }
 
         Mphf {
-            ranks: Self::compute_ranks(&bitvecs),
-            bitvecs: bitvecs.into_boxed_slice(),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
 
-    fn compute_ranks(bvs: &[BitVector]) -> Box<[Box<[u64]>]> {
+    fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
         let mut ranks = Vec::new();
         let mut pop = 0_u64;
 
@@ -290,7 +286,7 @@ impl<T: Hash + Debug> Mphf<T> {
                 pop += v.count_ones() as u64;
             }
 
-            ranks.push(rank.into_boxed_slice())
+            ranks.push((bv, rank.into_boxed_slice()))
         }
 
         ranks.into_boxed_slice()
@@ -299,8 +295,7 @@ impl<T: Hash + Debug> Mphf<T> {
     #[inline]
     fn get_rank(&self, hash: u64, i: usize) -> u64 {
         let idx = hash as usize;
-        let bv = self.bitvecs.get(i).expect("that level doesn't exist");
-        let ranks = self.ranks.get(i).expect("that level doesn't exist");
+        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
 
         // Last pre-computed rank
         let mut rank = ranks[idx / 512];
@@ -324,7 +319,7 @@ impl<T: Hash + Debug> Mphf<T> {
     /// in the construction set this function may panic.
     pub fn hash(&self, item: &T) -> u64 {
         for i in 0..self.bitvecs.len() {
-            let bv = &self.bitvecs[i];
+            let (bv, _) = &self.bitvecs[i];
             let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
@@ -344,7 +339,7 @@ impl<T: Hash + Debug> Mphf<T> {
         Q: ?Sized + Hash,
     {
         for i in 0..self.bitvecs.len() {
-            let bv = &(self.bitvecs)[i];
+            let (bv, _) = &(self.bitvecs)[i];
             let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash as usize) {
@@ -403,8 +398,7 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
         }
 
         Mphf {
-            ranks: Self::compute_ranks(&bitvecs),
-            bitvecs: bitvecs.into_boxed_slice(),
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
@@ -656,15 +650,14 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
             let mut buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
 
             for i in 0..buffered_mphf.bitvecs.len() {
-                let buff_vec = std::mem::replace(&mut buffered_mphf.bitvecs[i], BitVector::new(0));
+                let buff_vec =
+                    std::mem::replace(&mut buffered_mphf.bitvecs[i].0, BitVector::new(0));
                 bitvecs.push(buff_vec);
             }
         }
 
-        let ranks = Self::compute_ranks(&bitvecs);
         Mphf {
-            bitvecs: bitvecs.into_boxed_slice(),
-            ranks,
+            bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
     }
