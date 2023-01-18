@@ -91,7 +91,7 @@ fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: usize) -> u64 {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mphf<T> {
-    bitvecs: Box<[(BitVector,Box<[u64]>)]>,
+    bitvecs: Box<[(BitVector, Box<[u64]>)]>,
     phantom: PhantomData<T>,
 }
 
@@ -650,7 +650,8 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
             let mut buffered_mphf = Mphf::new_parallel(1.7, &buffered_keys_vec, Some(iter));
 
             for i in 0..buffered_mphf.bitvecs.len() {
-                let buff_vec = std::mem::replace(&mut buffered_mphf.bitvecs[i].0, BitVector::new(0));
+                let buff_vec =
+                    std::mem::replace(&mut buffered_mphf.bitvecs[i].0, BitVector::new(0));
                 bitvecs.push(buff_vec);
             }
         }
