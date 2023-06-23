@@ -45,7 +45,7 @@ where
         Self::create_map(keys, data, mphf)
     }
 
-    /// Get the value associated with `key`, if available, otherwise return None
+    /// Get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D>
     where
         K: Borrow<Q>,
@@ -65,7 +65,7 @@ where
         }
     }
 
-    /// Get the value associated with `key` mutably, if available, otherwise return None
+    /// Mutably get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D>
     where
         K: Borrow<Q>,
@@ -496,7 +496,7 @@ where
         NoKeyBoomHashMap { mphf, values }
     }
 
-    /// Get the value associated with `key`, if available, otherwise return None
+    /// Get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D1>
     where
         K: Borrow<Q>,
@@ -509,7 +509,7 @@ where
         }
     }
 
-    /// Get the value associated with `key` mutably, if available, otherwise return None
+    /// Mutably get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D1>
     where
         K: Borrow<Q>,
@@ -615,7 +615,7 @@ where
         }
     }
 
-    /// Get the value associated with `key`, if available, otherwise return None
+    /// Get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
     where
         K: Borrow<Q>,
@@ -625,7 +625,7 @@ where
         maybe_pos.map(|pos| (&self.values[pos as usize], &self.aux_values[pos as usize]))
     }
 
-    /// Get the value associated with `key` mutably, if available, otherwise return None
+    /// Mutably get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
     where
         K: Borrow<Q>,
