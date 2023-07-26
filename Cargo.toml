@@ -10,7 +10,7 @@ documentation = "https://10xgenomics.github.io/rust-boomphf/master/boomphf/index
 readme = "README.md"
 keywords = ["hashing", "minimal", "perfect"]
 edition = "2021"
-include = ["src/**/*", "LICENSE", "README.md"]
+include = ["src/**/*", "benches/*", "LICENSE", "README.md"]
 
 [dependencies]
 serde = { version=">=1.0", optional = true, features=["derive"] }
