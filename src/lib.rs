@@ -45,7 +45,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 #[cfg(feature = "parallel")]
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(feature = "parallel")]
 use std::sync::{Arc, Mutex};
 
@@ -75,10 +75,10 @@ fn fastmod(hash: u32, n: u32) -> u64 {
 }
 
 #[inline]
-fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: usize) -> u64 {
+fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
     // when n < 2^32, use the fast alternative to modulo described here:
     // https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
-    if n < 1 << 32 {
+    if n < (1 << 32) {
         let h = hash_with_seed32(iter, v);
         fastmod(h, n as u32) as u64
     } else {
@@ -109,7 +109,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     /// NOTE: the inner iterator `N::IntoIter` should override `nth` if there's an efficient way to skip
     /// over items when iterating.  This is important because later iterations of the MPHF construction algorithm
     /// skip most of the items.
-    pub fn from_chunked_iterator<I, N>(gamma: f64, objects: &'a I, n: usize) -> Mphf<T>
+    pub fn from_chunked_iterator<I, N>(gamma: f64, objects: &'a I, n: u64) -> Mphf<T>
     where
         &'a I: IntoIterator<Item = N>,
         N: IntoIterator<Item = T> + Send,
@@ -130,15 +130,19 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
                 panic!("counldn't find unique hashes");
             }
 
-            let keys_remaining = if iter == 0 { n } else { n - done_keys.len() };
+            let keys_remaining = if iter == 0 {
+                n
+            } else {
+                n - (done_keys.len() as u64)
+            };
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
 
-            let mut a = BitVector::new(size as usize);
-            let mut collide = BitVector::new(size as usize);
+            let mut a = BitVector::new(size);
+            let mut collide = BitVector::new(size);
 
             let seed = iter;
-            let mut offset = 0;
+            let mut offset = 0u64;
 
             for object in objects {
                 let mut object_iter = object.into_iter();
@@ -146,27 +150,27 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
                 // Note: we will use Iterator::nth() to advance the iterator if
                 // we've skipped over some items.
                 let mut object_pos = 0;
-                let len = object_iter.len();
+                let len = object_iter.len() as u64;
 
                 for object_index in 0..len {
                     let index = offset + object_index;
 
                     if !done_keys.contains(index) {
-                        let key = match object_iter.nth(object_index - object_pos) {
+                        let key = match object_iter.nth((object_index - object_pos) as usize) {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
 
                         object_pos = object_index + 1;
 
-                        let idx = hashmod(seed, &key, size as usize);
+                        let idx = hashmod(seed, &key, size);
 
-                        if collide.contains(idx as usize) {
+                        if collide.contains(idx) {
                             continue;
                         }
-                        let a_was_set = !a.insert_sync(idx as usize);
+                        let a_was_set = !a.insert_sync(idx);
                         if a_was_set {
-                            collide.insert_sync(idx as usize);
+                            collide.insert_sync(idx);
                         }
                     }
                 } // end-window for
@@ -174,33 +178,33 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
                 offset += len;
             } // end-objects for
 
-            let mut offset = 0;
+            let mut offset = 0u64;
             for object in objects {
                 let mut object_iter = object.into_iter();
 
                 // Note: we will use Iterator::nth() to advance the iterator if
                 // we've skipped over some items.
                 let mut object_pos = 0;
-                let len = object_iter.len();
+                let len = object_iter.len() as u64;
 
                 for object_index in 0..len {
                     let index = offset + object_index;
 
                     if !done_keys.contains(index) {
                         // This will fast-forward the iterator over unneeded items.
-                        let key = match object_iter.nth(object_index - object_pos) {
+                        let key = match object_iter.nth((object_index - object_pos) as usize) {
                             None => panic!("ERROR: max number of items overflowed"),
                             Some(key) => key,
                         };
 
                         object_pos = object_index + 1;
 
-                        let idx = hashmod(seed, &key, size as usize);
+                        let idx = hashmod(seed, &key, size);
 
-                        if collide.contains(idx as usize) {
-                            a.remove(idx as usize);
+                        if collide.contains(idx) {
+                            a.remove(idx);
                         } else {
-                            done_keys.insert(index as usize);
+                            done_keys.insert(index);
                         }
                     }
                 } // end-window for
@@ -209,7 +213,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
             } // end- objects for
 
             bitvecs.push(a);
-            if done_keys.len() == n {
+            if done_keys.len() as u64 == n {
                 break;
             }
             iter += 1;
@@ -234,7 +238,7 @@ impl<T: Hash + Debug> Mphf<T> {
         let mut iter = 0;
 
         let mut cx = Context::new(
-            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            std::cmp::max(255, (gamma * objects.len() as f64) as u64),
             iter,
         );
 
@@ -249,7 +253,7 @@ impl<T: Hash + Debug> Mphf<T> {
 
         while !redo_keys.is_empty() {
             let mut cx = Context::new(
-                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as u64),
                 iter,
             );
 
@@ -320,9 +324,9 @@ impl<T: Hash + Debug> Mphf<T> {
     pub fn hash(&self, item: &T) -> u64 {
         for i in 0..self.bitvecs.len() {
             let (bv, _) = &self.bitvecs[i];
-            let hash = hashmod(i as u64, item, bv.capacity());
+            let hash = hashmod(i as u64, item, bv.capacity() as u64);
 
-            if bv.contains(hash as usize) {
+            if bv.contains(hash) {
                 return self.get_rank(hash, i);
             }
         }
@@ -340,9 +344,9 @@ impl<T: Hash + Debug> Mphf<T> {
     {
         for i in 0..self.bitvecs.len() {
             let (bv, _) = &(self.bitvecs)[i];
-            let hash = hashmod(i as u64, item, bv.capacity());
+            let hash = hashmod(i as u64, item, bv.capacity() as u64);
 
-            if bv.contains(hash as usize) {
+            if bv.contains(hash) {
                 return Some(self.get_rank(hash, i));
             }
         }
@@ -362,7 +366,7 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
         let mut iter = 0;
 
         let cx = Context::new(
-            std::cmp::max(255, (gamma * objects.len() as f64) as usize),
+            std::cmp::max(255, (gamma * objects.len() as f64) as u64),
             starting_seed.unwrap_or(0) + iter,
         );
 
@@ -377,7 +381,7 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
 
         while !redo_keys.is_empty() {
             let cx = Context::new(
-                std::cmp::max(255, (gamma * redo_keys.len() as f64) as usize),
+                std::cmp::max(255, (gamma * redo_keys.len() as f64) as u64),
                 starting_seed.unwrap_or(0) + iter,
             );
 
@@ -405,16 +409,16 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
 }
 
 struct Context {
-    size: usize,
+    size: u64,
     seed: u64,
     a: BitVector,
     collide: BitVector,
 }
 
 impl Context {
-    fn new(size: usize, seed: u64) -> Self {
+    fn new(size: u64, seed: u64) -> Self {
         Self {
-            size,
+            size: size as u64,
             seed,
             a: BitVector::new(size),
             collide: BitVector::new(size),
@@ -423,14 +427,14 @@ impl Context {
 
     #[cfg(feature = "parallel")]
     fn find_collisions<T: Hash>(&self, v: &T) {
-        let idx = hashmod(self.seed, v, self.size) as usize;
+        let idx = hashmod(self.seed, v, self.size);
         if !self.collide.contains(idx) && !self.a.insert(idx) {
             self.collide.insert(idx);
         }
     }
 
     fn find_collisions_sync<T: Hash>(&mut self, v: &T) {
-        let idx = hashmod(self.seed, v, self.size) as usize;
+        let idx = hashmod(self.seed, v, self.size);
         if !self.collide.contains(idx) && !self.a.insert_sync(idx) {
             self.collide.insert_sync(idx);
         }
@@ -438,7 +442,7 @@ impl Context {
 
     #[cfg(feature = "parallel")]
     fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
-        let idx = hashmod(self.seed, v, self.size) as usize;
+        let idx = hashmod(self.seed, v, self.size);
         if self.collide.contains(idx) {
             self.a.remove(idx);
             Some(v)
@@ -449,7 +453,7 @@ impl Context {
 
     #[cfg(not(feature = "parallel"))]
     fn filter<'t, T: Hash>(&mut self, v: &'t T) -> Option<&'t T> {
-        let idx = hashmod(self.seed, v, self.size) as usize;
+        let idx = hashmod(self.seed, v, self.size);
         if self.collide.contains(idx) {
             self.a.remove(idx);
             Some(v)
@@ -468,8 +472,8 @@ where
     keys_object: &'a I,
     queue: <&'a I as IntoIterator>::IntoIter,
 
-    num_keys: usize,
-    last_key_index: usize,
+    num_keys: u64,
+    last_key_index: u64,
 
     job_id: u8,
 
@@ -483,7 +487,7 @@ where
     N2: Iterator<Item = T> + ExactSizeIterator,
     N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
 {
-    fn new(keys_object: &'a I, num_keys: usize) -> Queue<'a, I, T> {
+    fn new(keys_object: &'a I, num_keys: u64) -> Queue<'a, I, T> {
         Queue {
             keys_object,
             queue: keys_object.into_iter(),
@@ -497,7 +501,7 @@ where
         }
     }
 
-    fn next(&mut self, done_keys_count: &AtomicUsize) -> Option<(N2, u8, usize, usize)> {
+    fn next(&mut self, done_keys_count: &AtomicU64) -> Option<(N2, u8, u64, u64)> {
         if self.last_key_index == self.num_keys {
             loop {
                 let done_count = done_keys_count.load(Ordering::SeqCst);
@@ -520,7 +524,7 @@ where
         let node = self.queue.next().unwrap();
         let node_keys_start = self.last_key_index;
 
-        let num_keys = node.clone().into_iter().len();
+        let num_keys = node.clone().into_iter().len() as u64;
 
         self.last_key_index += num_keys;
 
@@ -536,7 +540,7 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
         gamma: f64,
         objects: &'a I,
         max_iters: Option<u64>,
-        n: usize,
+        n: u64,
         num_threads: usize,
     ) -> Mphf<T>
     where
@@ -548,9 +552,9 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
     {
         // TODO CONSTANT, might have to change
         // Allowing atmost 381Mb for buffer
-        const MAX_BUFFER_SIZE: usize = 50000000;
+        const MAX_BUFFER_SIZE: u64 = 50000000;
         const ONE_PERCENT_KEYS: f32 = 0.01;
-        let min_buffer_keys_threshold: usize = (ONE_PERCENT_KEYS * n as f32) as usize;
+        let min_buffer_keys_threshold: u64 = (ONE_PERCENT_KEYS * n as f32) as u64;
 
         let mut iter: u64 = 0;
         let mut bitvecs = Vec::<BitVector>::new();
@@ -582,10 +586,10 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
 
             let size = std::cmp::max(255, (gamma * keys_remaining as f64) as u64);
             let cx = Arc::new(IterContext {
-                done_keys_count: AtomicUsize::new(0),
+                done_keys_count: AtomicU64::new(0),
                 work_queue: Mutex::new(Queue::new(objects, n)),
-                collide: BitVector::new(size as usize),
-                a: BitVector::new(size as usize),
+                collide: BitVector::new(size),
+                a: BitVector::new(size),
             });
 
             crossbeam_utils::thread::scope(|scope| {
@@ -608,10 +612,10 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
                                     continue;
                                 }
 
-                                let key = node.nth(index - node_pos).unwrap();
+                                let key = node.nth((index - node_pos) as usize).unwrap();
                                 node_pos = index + 1;
 
-                                let idx = hashmod(iter, &key, size as usize) as usize;
+                                let idx = hashmod(iter, &key, size);
                                 let collision = cx.collide.contains(idx);
                                 if job_id == 0 {
                                     if !collision && !cx.a.insert(idx) {
@@ -670,7 +674,7 @@ where
     N2: Iterator<Item = T> + ExactSizeIterator,
     N1: IntoIterator<Item = T, IntoIter = N2> + Clone,
 {
-    done_keys_count: AtomicUsize,
+    done_keys_count: AtomicU64,
     work_queue: Mutex<Queue<'a, I, T>>,
     collide: BitVector,
     a: BitVector,
@@ -750,7 +754,7 @@ mod tests {
         true
     }
 
-    fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: usize) -> bool
+    fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: u64) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
@@ -770,7 +774,7 @@ mod tests {
     }
 
     #[cfg(feature = "parallel")]
-    fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: usize) -> bool
+    fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: u64) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
@@ -790,11 +794,29 @@ mod tests {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn check_chunked_mphf_parallel<T>(_values: Vec<Vec<T>>, _total: usize) -> bool
+    fn check_chunked_mphf_parallel<T>(_values: Vec<Vec<T>>, _total: u64) -> bool
     where
         T: Sync + Hash + PartialEq + Eq + Debug + Send,
     {
         true
+    }
+
+    // this does not work under WASI.
+    #[test]
+    #[cfg(feature = "parallel")]
+    fn check_crossbeam_scope() {
+        crossbeam_utils::thread::scope(|scope| {
+            let mut handles = vec![];
+            for i in 0..2 {
+                let h = scope.spawn(move |_| i * i);
+                handles.push(h);
+            }
+
+            for (i, h) in handles.into_iter().enumerate() {
+                assert_eq!(i * i, h.join().unwrap());
+            }
+        })
+        .unwrap()
     }
 
     quickcheck! {
@@ -822,7 +844,7 @@ mod tests {
                 }
             }
 
-            check_chunked_mphf(slices.clone(), total) && check_chunked_mphf_parallel(slices, total)
+            check_chunked_mphf(slices.clone(), total as u64) && check_chunked_mphf_parallel(slices, total as u64)
         }
     }
 

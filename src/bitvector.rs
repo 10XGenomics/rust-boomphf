@@ -26,36 +26,36 @@
 
 use std::fmt;
 #[cfg(feature = "parallel")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
 
 #[cfg(feature = "parallel")]
-type Word = AtomicUsize;
+type Word = AtomicU64;
 
 #[cfg(not(feature = "parallel"))]
-type Word = usize;
+type Word = u64;
 
 /// Bitvector
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitVector {
-    bits: usize,
+    bits: u64,
     #[cfg(feature = "parallel")]
     #[cfg_attr(
         feature = "serde",
         serde(serialize_with = "ser_atomic_vec", deserialize_with = "de_atomic_vec")
     )]
-    vector: Box<[AtomicUsize]>,
+    vector: Box<[AtomicU64]>,
 
     #[cfg(not(feature = "parallel"))]
-    vector: Box<[usize]>,
+    vector: Box<[u64]>,
 }
 
 // Custom serializer
 #[cfg(all(feature = "serde", feature = "parallel"))]
-fn ser_atomic_vec<S>(v: &[AtomicUsize], serializer: S) -> Result<S::Ok, S::Error>
+fn ser_atomic_vec<S>(v: &[AtomicU64], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -69,14 +69,14 @@ where
 
 // Custom deserializer
 #[cfg(all(feature = "serde", feature = "parallel"))]
-pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Box<[AtomicUsize]>, D::Error>
+pub fn de_atomic_vec<'de, D>(deserializer: D) -> Result<Box<[AtomicU64]>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    struct AtomicUsizeSeqVisitor;
+    struct AtomicU64SeqVisitor;
 
-    impl<'de> serde::de::Visitor<'de> for AtomicUsizeSeqVisitor {
-        type Value = Box<[AtomicUsize]>;
+    impl<'de> serde::de::Visitor<'de> for AtomicU64SeqVisitor {
+        type Value = Box<[AtomicU64]>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a 64bit unsigned integer")
@@ -86,15 +86,15 @@ where
         where
             S: serde::de::SeqAccess<'de>,
         {
-            let mut vec = Vec::<AtomicUsize>::with_capacity(access.size_hint().unwrap_or(0));
+            let mut vec = Vec::<AtomicU64>::with_capacity(access.size_hint().unwrap_or(0));
 
             while let Some(x) = access.next_element()? {
-                vec.push(AtomicUsize::new(x));
+                vec.push(AtomicU64::new(x));
             }
             Ok(vec.into_boxed_slice())
         }
     }
-    let x = AtomicUsizeSeqVisitor;
+    let x = AtomicU64SeqVisitor;
     deserializer.deserialize_seq(x)
 }
 
@@ -106,7 +106,7 @@ impl core::clone::Clone for BitVector {
             vector: self
                 .vector
                 .iter()
-                .map(|x| AtomicUsize::new(x.load(Ordering::SeqCst)))
+                .map(|x| AtomicU64::new(x.load(Ordering::SeqCst)))
                 .collect(),
             #[cfg(not(feature = "parallel"))]
             vector: self.vector.clone(),
@@ -134,23 +134,13 @@ impl PartialEq for BitVector {
     }
 }
 
-#[cfg(feature = "parallel")]
-fn to_word(v: usize) -> AtomicUsize {
-    AtomicUsize::new(v)
-}
-
-#[cfg(not(feature = "parallel"))]
-fn to_word(v: usize) -> usize {
-    v
-}
-
 impl BitVector {
     /// Build a new empty bitvector
-    pub fn new(bits: usize) -> Self {
+    pub fn new(bits: u64) -> Self {
         let n = u64s(bits);
-        let mut v = Vec::with_capacity(n);
+        let mut v: Vec<Word> = Vec::with_capacity(n as usize);
         for _ in 0..n {
-            v.push(to_word(0));
+            v.push(Word::default());
         }
 
         BitVector {
@@ -164,14 +154,15 @@ impl BitVector {
     /// If `bits % 64 > 0`, the last u64 is guaranteed not to
     /// have any extra 1 bits.
     #[allow(dead_code)]
-    pub fn ones(bits: usize) -> Self {
+    pub fn ones(bits: u64) -> Self {
         let (word, offset) = word_offset(bits);
-        let mut bvec = Vec::with_capacity(word + 1);
+        let mut bvec: Vec<Word> = Vec::with_capacity((word + 1) as usize);
         for _ in 0..word {
-            bvec.push(to_word(usize::max_value()));
+            bvec.push(u64::max_value().into());
         }
 
-        bvec.push(to_word(usize::max_value() >> (64 - offset)));
+        let last_val = u64::max_value() >> (64 - offset);
+        bvec.push(last_val.into());
         BitVector {
             bits,
             vector: bvec.into_boxed_slice(),
@@ -194,13 +185,13 @@ impl BitVector {
     }
 
     /// the number of elements in set
-    pub fn len(&self) -> usize {
-        self.vector.iter().fold(0usize, |x0, x| {
+    pub fn len(&self) -> u64 {
+        self.vector.iter().fold(0u64, |x0, x| {
             #[cfg(feature = "parallel")]
-            return x0 + x.load(Ordering::Relaxed).count_ones() as usize;
+            return x0 + x.load(Ordering::Relaxed).count_ones() as u64;
 
             #[cfg(not(feature = "parallel"))]
-            return x0 + x.count_ones() as usize;
+            return x0 + x.count_ones() as u64;
         })
     }
 
@@ -217,15 +208,15 @@ impl BitVector {
     ///
     /// Insert, remove and contains do not do bound check.
     #[inline]
-    pub fn contains(&self, bit: usize) -> bool {
+    pub fn contains(&self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
-        (self.get_word(word) as usize & mask) != 0
+        (self.get_word(word) & mask) != 0
     }
 
     /// compare if the following is true:
     ///
     /// self \cap {0, 1, ... , bit - 1} == other \cap {0, 1, ... ,bit - 1}
-    pub fn eq_left(&self, other: &BitVector, bit: usize) -> bool {
+    pub fn eq_left(&self, other: &BitVector, bit: u64) -> bool {
         if bit == 0 {
             return true;
         }
@@ -239,7 +230,7 @@ impl BitVector {
         self.vector
             .iter()
             .zip(other.vector.iter())
-            .take(word)
+            .take(word as usize)
             .all(|(s1, s2)| {
                 #[cfg(feature = "parallel")]
                 return s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed);
@@ -247,7 +238,8 @@ impl BitVector {
                 #[cfg(not(feature = "parallel"))]
                 return s1 == s2;
             })
-            && (self.get_word(word) << (63 - offset)) == (other.get_word(word) << (63 - offset))
+            && (self.get_word(word as usize) << (63 - offset))
+                == (other.get_word(word as usize) << (63 - offset))
     }
 
     /// insert a new element to set
@@ -258,7 +250,7 @@ impl BitVector {
     /// Insert, remove and contains do not do bound check.
     #[inline]
     #[cfg(feature = "parallel")]
-    pub fn insert(&self, bit: usize) -> bool {
+    pub fn insert(&self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &self.vector[word];
 
@@ -268,7 +260,7 @@ impl BitVector {
 
     #[inline]
     #[cfg(not(feature = "parallel"))]
-    pub fn insert(&mut self, bit: usize) -> bool {
+    pub fn insert(&mut self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.vector[word];
 
@@ -287,7 +279,7 @@ impl BitVector {
     ///
     /// Insert, remove and contains do not do bound check.
     #[inline]
-    pub fn insert_sync(&mut self, bit: usize) -> bool {
+    pub fn insert_sync(&mut self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
         #[cfg(feature = "parallel")]
         let data = self.vector[word].get_mut();
@@ -306,7 +298,7 @@ impl BitVector {
     ///
     /// Insert, remove and contains do not do bound check.
     #[cfg(feature = "parallel")]
-    pub fn remove(&self, bit: usize) -> bool {
+    pub fn remove(&self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &self.vector[word];
 
@@ -315,7 +307,7 @@ impl BitVector {
     }
 
     #[cfg(not(feature = "parallel"))]
-    pub fn remove(&mut self, bit: usize) -> bool {
+    pub fn remove(&mut self, bit: u64) -> bool {
         let (word, mask) = word_mask(bit);
         let data = &mut self.vector[word];
 
@@ -364,7 +356,7 @@ impl BitVector {
     }
 
     /// the max number of elements can be inserted into set
-    pub fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> u64 {
         self.bits
     }
 
@@ -395,14 +387,14 @@ impl BitVector {
 /// Iterator for BitVector
 pub struct BitVectorIter<'a> {
     iter: ::std::slice::Iter<'a, Word>,
-    current: usize,
-    idx: usize,
-    size: usize,
+    current: u64,
+    idx: u64,
+    size: u64,
 }
 
 impl<'a> Iterator for BitVectorIter<'a> {
-    type Item = usize;
-    fn next(&mut self) -> Option<usize> {
+    type Item = u64;
+    fn next(&mut self) -> Option<u64> {
         if self.idx >= self.size {
             return None;
         }
@@ -423,7 +415,7 @@ impl<'a> Iterator for BitVectorIter<'a> {
                 return None;
             }
         }
-        let offset = self.current.trailing_zeros() as usize;
+        let offset = self.current.trailing_zeros() as u64;
         self.current >>= offset;
         self.current >>= 1; // shift otherwise overflows for 0b1000_0000_…_0000
         self.idx += offset + 1;
@@ -431,17 +423,17 @@ impl<'a> Iterator for BitVectorIter<'a> {
     }
 }
 
-fn u64s(elements: usize) -> usize {
+fn u64s(elements: u64) -> u64 {
     (elements + 63) / 64
 }
 
-fn word_offset(index: usize) -> (usize, usize) {
+fn word_offset(index: u64) -> (u64, u64) {
     (index / 64, index % 64)
 }
 
 #[inline]
-fn word_mask(index: usize) -> (usize, usize) {
-    let word = index / 64;
+fn word_mask(index: u64) -> (usize, u64) {
+    let word = (index / 64) as usize;
     let mask = 1 << (index % 64);
     (word, mask)
 }
