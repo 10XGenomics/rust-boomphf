@@ -65,11 +65,6 @@ fn hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
 }
 
 #[inline]
-fn hash_with_seed32<T: Hash + ?Sized>(iter: u64, v: &T) -> u32 {
-    fold(hash_with_seed(iter, v))
-}
-
-#[inline]
 fn fastmod(hash: u32, n: u32) -> u64 {
     ((hash as u64) * (n as u64)) >> 32
 }
@@ -78,11 +73,10 @@ fn fastmod(hash: u32, n: u32) -> u64 {
 fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
     // when n < 2^32, use the fast alternative to modulo described here:
     // https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+    let h = hash_with_seed(iter, v);
     if n < (1 << 32) {
-        let h = hash_with_seed32(iter, v);
-        fastmod(h, n as u32) as u64
+        fastmod(fold(h), n as u32) as u64
     } else {
-        let h = hash_with_seed(iter, v);
         h % (n as u64)
     }
 }
