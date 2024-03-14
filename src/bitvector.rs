@@ -37,6 +37,92 @@ type Word = AtomicU64;
 #[cfg(not(feature = "parallel"))]
 type Word = u64;
 
+#[cfg(target_endian = "little")]
+#[derive(Clone, Copy, Debug)]
+pub struct BitVectorRef<'a> {
+    bits: u64,
+    vector: &'a [u64],
+}
+
+impl<'a> PartialEq for BitVectorRef<'a> {
+    fn eq(&self, other: &BitVectorRef<'_>) -> bool {
+        self.eq_left(other, self.bits)
+    }
+}
+
+impl<'a> PartialEq<BitVector> for BitVectorRef<'a> {
+    fn eq(&self, other: &BitVector) -> bool {
+        self.eq_left(&other.as_ref(), self.bits)
+    }
+}
+
+#[cfg(target_endian = "little")]
+impl<'a> BitVectorRef<'a> {
+    #[cfg(target_endian = "little")]
+    pub(crate) fn from_dma(dma: [&'a [u8]; 2]) -> Self {
+        assert_eq!(dma[0].len(), std::mem::size_of::<u64>(), "Must be a u64");
+        assert_eq!(
+            dma[1].len() % std::mem::size_of::<u64>(),
+            0,
+            "Must be an even number of u64"
+        );
+        assert_eq!(
+            dma[1].as_ptr().align_offset(std::mem::size_of::<u64>()),
+            0,
+            "BitVectorRef must be passed an 8-byte aligned slice"
+        );
+
+        let vector = crate::u8_slice_cast(dma[1]);
+
+        Self {
+            bits: u64::from_le_bytes(dma[0].try_into().unwrap()),
+            vector,
+        }
+    }
+
+    /// the max number of elements can be inserted into set
+    pub fn capacity(&self) -> u64 {
+        self.bits
+    }
+
+    /// If `bit` belongs to set, return `true`, else return `false`.
+    ///
+    /// Insert, remove and contains do not do bound check.
+    #[inline]
+    pub fn contains(&self, bit: u64) -> bool {
+        let (word, mask) = word_mask(bit);
+        (self.get_word(word) & mask) != 0
+    }
+
+    #[inline]
+    pub fn get_word(&self, word: usize) -> u64 {
+        self.vector[word]
+    }
+
+    /// compare if the following is true:
+    ///
+    /// self \cap {0, 1, ... , bit - 1} == other \cap {0, 1, ... ,bit - 1}
+    pub fn eq_left(&self, other: &BitVectorRef<'_>, bit: u64) -> bool {
+        if bit == 0 {
+            return true;
+        }
+        let (word, offset) = word_offset(bit - 1);
+        // We can also use slice comparison, which only take 1 line.
+        // However, it has been reported that the `Eq` implementation of slice
+        // is extremly slow.
+        //
+        // self.vector.as_slice()[0 .. word] == other.vector.as_slice[0 .. word]
+        //
+        self.vector
+            .iter()
+            .zip(other.vector.iter())
+            .take(word as usize)
+            .all(|(s1, s2)| *s1 == *s2)
+            && (self.get_word(word as usize) << (63 - offset))
+                == (other.get_word(word as usize) << (63 - offset))
+    }
+}
+
 /// Bitvector
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -51,6 +137,53 @@ pub struct BitVector {
 
     #[cfg(not(feature = "parallel"))]
     vector: Box<[u64]>,
+}
+
+impl BitVector {
+    #[cfg(target_endian = "little")]
+    pub(crate) fn dma(&self) -> [&[u8]; 2] {
+        #[cfg(feature = "parallel")]
+        let vec: &[u64] = unsafe { std::mem::transmute::<&[AtomicU64], &[u64]>(&*self.vector) };
+
+        #[cfg(not(feature = "parallel"))]
+        let vec: &[u64] = &*self.vector;
+
+        let vec_len = std::mem::size_of_val(vec);
+        let vec_ptr: *const [u64] = vec;
+        let vec_ptr = vec_ptr as *const u8;
+
+        let vec: &[u8] = unsafe { std::slice::from_raw_parts(vec_ptr, vec_len) };
+
+        let bits: *const u64 = &self.bits;
+        let bits =
+            unsafe { std::slice::from_raw_parts(bits as *const u8, std::mem::size_of::<u64>()) };
+
+        [bits, vec]
+    }
+
+    #[cfg(target_endian = "little")]
+    pub(crate) fn copy_from_dma(dma: [&[u8]; 2]) -> Self {
+        assert_eq!(dma[0].len(), std::mem::size_of::<u64>(), "Must be a u64");
+        assert_eq!(
+            dma[1].len() % std::mem::size_of::<u64>(),
+            0,
+            "Must be an even number of u64"
+        );
+
+        #[cfg(feature = "parallel")]
+        let mapper = |chunk: &[u8]| AtomicU64::new(u64::from_le_bytes(chunk.try_into().unwrap()));
+
+        #[cfg(not(feature = "parallel"))]
+        let mapper = |chunk: &[u8]| u64::from_le_bytes(chunk.try_into().unwrap());
+
+        Self {
+            bits: u64::from_le_bytes(dma[0].try_into().unwrap()),
+            vector: dma[1]
+                .chunks_exact(std::mem::size_of::<u64>())
+                .map(mapper)
+                .collect(),
+        }
+    }
 }
 
 // Custom serializer
@@ -134,6 +267,12 @@ impl PartialEq for BitVector {
     }
 }
 
+impl PartialEq<BitVectorRef<'_>> for BitVector {
+    fn eq(&self, other: &BitVectorRef<'_>) -> bool {
+        self.as_ref().eq_left(other, self.bits)
+    }
+}
+
 impl BitVector {
     /// Build a new empty bitvector
     pub fn new(bits: u64) -> Self {
@@ -146,6 +285,19 @@ impl BitVector {
         BitVector {
             bits,
             vector: v.into_boxed_slice(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_ref<'a>(&'a self) -> BitVectorRef<'a> {
+        let vector = &*self.vector;
+
+        #[cfg(feature = "parallel")]
+        let vector = unsafe { std::mem::transmute::<&[AtomicU64], &[u64]>(vector) };
+
+        BitVectorRef {
+            bits: self.bits,
+            vector,
         }
     }
 
@@ -209,37 +361,14 @@ impl BitVector {
     /// Insert, remove and contains do not do bound check.
     #[inline]
     pub fn contains(&self, bit: u64) -> bool {
-        let (word, mask) = word_mask(bit);
-        (self.get_word(word) & mask) != 0
+        self.as_ref().contains(bit)
     }
 
     /// compare if the following is true:
     ///
     /// self \cap {0, 1, ... , bit - 1} == other \cap {0, 1, ... ,bit - 1}
     pub fn eq_left(&self, other: &BitVector, bit: u64) -> bool {
-        if bit == 0 {
-            return true;
-        }
-        let (word, offset) = word_offset(bit - 1);
-        // We can also use slice comparison, which only take 1 line.
-        // However, it has been reported that the `Eq` implementation of slice
-        // is extremly slow.
-        //
-        // self.vector.as_slice()[0 .. word] == other.vector.as_slice[0 .. word]
-        //
-        self.vector
-            .iter()
-            .zip(other.vector.iter())
-            .take(word as usize)
-            .all(|(s1, s2)| {
-                #[cfg(feature = "parallel")]
-                return s1.load(Ordering::Relaxed) == s2.load(Ordering::Relaxed);
-
-                #[cfg(not(feature = "parallel"))]
-                return s1 == s2;
-            })
-            && (self.get_word(word as usize) << (63 - offset))
-                == (other.get_word(word as usize) << (63 - offset))
+        self.as_ref().eq_left(&other.as_ref(), bit)
     }
 
     /// insert a new element to set
@@ -362,11 +491,7 @@ impl BitVector {
 
     #[inline]
     pub fn get_word(&self, word: usize) -> u64 {
-        #[cfg(feature = "parallel")]
-        return self.vector[word].load(Ordering::Relaxed);
-
-        #[cfg(not(feature = "parallel"))]
-        return self.vector[word] as u64;
+        self.as_ref().get_word(word)
     }
 
     pub fn num_words(&self) -> usize {

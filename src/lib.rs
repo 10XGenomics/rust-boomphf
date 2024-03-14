@@ -37,6 +37,8 @@ pub mod hashmap;
 #[cfg(feature = "parallel")]
 mod par_iter;
 use bitvector::BitVector;
+#[cfg(target_endian = "little")]
+use bitvector::BitVectorRef;
 
 use log::error;
 use std::borrow::Borrow;
@@ -249,6 +251,131 @@ fn hashmod<T: SeedableHash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
     }
 }
 
+#[cfg(target_endian = "little")]
+pub(crate) fn u8_slice_cast<T>(s: &[u8]) -> &[T] {
+    assert_eq!(s.len() % std::mem::size_of::<T>(), 0, "Invalid length");
+    assert_eq!(
+        s.as_ptr().align_offset(std::mem::size_of::<T>()),
+        0,
+        "Misaligned - not safe"
+    );
+
+    let converted_length = s.len() / std::mem::size_of::<T>();
+    let converted: *const [u8] = s;
+    unsafe { std::slice::from_raw_parts(converted as *const T, converted_length) }
+}
+
+/// Can only be used for lookups and same interface as Mphf. This is useful if you have the serialized
+/// form stored somewhere in a raw uncompressed form and just want to reference it cheaply without copying
+/// the bulk of the underlying data. In the future it might be possible to define an efficient contiguous
+/// layout that lets us avoid even the heap allocation although it might be tricky since this is an array
+/// of tuples where each tuple itself has 2 arrays (i.e. randomly accessing the BitVectorRef is tricky
+/// without defining a fast serialized representation of an index to aide in that endeavour).
+///
+/// Note: the type parameter doesn't actually mean anything since you can
+/// launder by round-tripping through serialization (but that's true for serde as well).
+#[derive(Clone, Debug)]
+pub struct MphfRef<'a, T> {
+    bitvecs: Box<[(BitVectorRef<'a>, &'a [u64])]>,
+    phantom: PhantomData<T>,
+}
+
+impl<'a, T> MphfRef<'a, T> {
+    /// This takes an iterator of slices that compose all the parts of the original [Mphf] as returned by [Mphf::to_dma].
+    /// This requires some memory allocations to set up the internal data structures, but the underlying data itself isn't
+    /// copied at all.
+    #[cfg(target_endian = "little")]
+    pub fn from_scatter_dma(mut dma: impl ExactSizeIterator<Item = &'a [u8]>) -> Self {
+        assert_eq!(dma.len() % 3, 0);
+        let num_bitvecs = dma.len() / 3;
+        let mut bitvecs = Vec::with_capacity(num_bitvecs);
+
+        for _ in 0..num_bitvecs {
+            let bitvec = BitVectorRef::from_dma([dma.next().unwrap(), dma.next().unwrap()]);
+            let raw_ranks = dma.next().unwrap();
+            bitvecs.push((bitvec, u8_slice_cast(raw_ranks)));
+        }
+
+        assert_eq!(dma.next(), None, "Didn't properly consume DMA stream");
+
+        Self {
+            bitvecs: bitvecs.into_boxed_slice(),
+            phantom: Default::default(),
+        }
+    }
+
+    #[inline]
+    fn get_rank(&self, hash: u64, i: usize) -> u64 {
+        let idx = hash as usize;
+        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
+
+        // Last pre-computed rank
+        let mut rank = ranks[idx / 512];
+
+        // Add rank of intervening words
+        for j in (idx / 64) & !7..idx / 64 {
+            rank += bv.get_word(j).count_ones() as u64;
+        }
+
+        // Add rank of final word up to hash
+        let final_word = bv.get_word(idx / 64);
+        if idx % 64 > 0 {
+            rank += (final_word << (64 - (idx % 64))).count_ones() as u64;
+        }
+        rank
+    }
+
+    /// Compute the hash value of `item`. This method should only be used
+    /// with items known to be in construction set. Use `try_hash` if you cannot
+    /// guarantee that `item` was in the construction set. If `item` was not present
+    /// in the construction set this function may panic.
+    pub fn hash<Q>(&self, item: &Q) -> u64
+    where
+        T: Borrow<Q>,
+        Q: ?Sized + SeedableHash,
+    {
+        for i in 0..self.bitvecs.len() {
+            let (bv, _) = &self.bitvecs[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
+
+            if bv.contains(hash) {
+                return self.get_rank(hash, i);
+            }
+        }
+
+        unreachable!("must find a hash value");
+    }
+
+    /// Compute the hash value of `item`. If `item` was not present
+    /// in the set of objects used to construct the hash function, the return
+    /// value will an arbitrary value Some(x), or None.
+    pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
+    where
+        T: Borrow<Q>,
+        Q: ?Sized + SeedableHash,
+    {
+        for i in 0..self.bitvecs.len() {
+            let (bv, _) = &(self.bitvecs)[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
+
+            if bv.contains(hash) {
+                return Some(self.get_rank(hash, i));
+            }
+        }
+
+        None
+    }
+}
+
+impl<'a, T> PartialEq<Mphf<T>> for MphfRef<'a, T> {
+    fn eq(&self, other: &Mphf<T>) -> bool {
+        self.bitvecs
+            .iter()
+            .zip(other.bitvecs.iter())
+            .all(|(b1, b2)| b1.0 == b2.0 && b1.1 == &*b2.1)
+    }
+}
+
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -257,9 +384,68 @@ pub struct Mphf<T> {
     phantom: PhantomData<T>,
 }
 
+impl<T> PartialEq for Mphf<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bitvecs == other.bitvecs
+    }
+}
+
+impl<T> PartialEq<MphfRef<'_, T>> for Mphf<T> {
+    fn eq(&self, other: &MphfRef<'_, T>) -> bool {
+        self.bitvecs
+            .iter()
+            .zip(other.bitvecs.iter())
+            .all(|(b1, b2)| b1.0 == b2.0 && &*b1.1 == b2.1)
+    }
+}
+
 const MAX_ITERS: u64 = 100;
 
 impl<T> Mphf<T> {
+    pub fn num_dma_slices(&self) -> usize {
+        // See to_dma.
+        self.bitvecs.len() * 3
+    }
+
+    #[cfg(target_endian = "little")]
+    pub fn to_dma(&self) -> Vec<&[u8]> {
+        // Each bitvec has 3 DMA regions within it: the bits value within BitVector, the vector within BitVector and the ranks.
+        let mut scattered = Vec::with_capacity(self.bitvecs.len() * 3);
+        for (bitvec, ranks) in self.bitvecs.iter() {
+            for piece in bitvec.dma() {
+                scattered.push(piece)
+            }
+
+            let ranks = &**ranks;
+            let ranks_len = std::mem::size_of_val(ranks);
+            let ranks_ptr: *const [u64] = ranks;
+            let ranks_ptr: *const u64 = ranks_ptr as *const u64;
+            scattered
+                .push(unsafe { std::slice::from_raw_parts(ranks_ptr as *const u8, ranks_len) });
+        }
+
+        assert_eq!(scattered.len() % 3, 0);
+        scattered
+    }
+
+    #[cfg(target_endian = "little")]
+    pub fn copy_from_scatter_dma<'a>(mut dma: impl ExactSizeIterator<Item = &'a [u8]>) -> Self {
+        assert_eq!(dma.len() % 3, 0);
+        let num_bitvecs = dma.len() / 3;
+        let mut bitvecs = Vec::with_capacity(num_bitvecs);
+        for _ in 0..num_bitvecs {
+            let bitvec = BitVector::copy_from_dma([dma.next().unwrap(), dma.next().unwrap()]);
+            let ranks = u8_slice_cast::<u64>(dma.next().unwrap()).into();
+            bitvecs.push((bitvec, ranks));
+        }
+        assert_eq!(dma.next(), None, "Didn't fully consume DMA slices");
+
+        Self {
+            bitvecs: bitvecs.into_boxed_slice(),
+            phantom: Default::default(),
+        }
+    }
+
     fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
         let mut ranks = Vec::new();
         let mut pop = 0_u64;
@@ -1072,5 +1258,33 @@ mod tests {
             phf.try_hash(&ExternallyHashed(wyhash::wyrng(&mut 1000129))),
             None
         );
+    }
+
+    #[test]
+    fn dma_serde() {
+        // User gets to pick the hash function.
+        let items = (0..1000000).map(|x| x * 2).collect::<Vec<_>>();
+        let phf = Mphf::new(1.7, &items);
+
+        let serialized = phf.to_dma();
+
+        let phf2 = Mphf::<i32>::copy_from_scatter_dma(serialized.iter().copied());
+        let phf3 = MphfRef::<i32>::from_scatter_dma(serialized.iter().copied());
+
+        assert_eq!(phf, phf2);
+        assert_eq!(phf2, phf);
+
+        assert_eq!(phf, phf3);
+        assert_eq!(phf3, phf);
+
+        for i in items {
+            assert_eq!(phf.try_hash(&i), phf2.try_hash(&i));
+            assert_eq!(phf.try_hash(&i), phf3.try_hash(&i));
+        }
+
+        for i in 1000000..1000000 * 2 {
+            assert_eq!(phf.try_hash(&i), phf2.try_hash(&i));
+            assert_eq!(phf.try_hash(&i), phf3.try_hash(&i));
+        }
     }
 }
