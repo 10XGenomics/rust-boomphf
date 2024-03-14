@@ -363,7 +363,7 @@ impl BitVector {
     #[inline]
     pub fn get_word(&self, word: usize) -> u64 {
         #[cfg(feature = "parallel")]
-        return self.vector[word].load(Ordering::Relaxed) as u64;
+        return self.vector[word].load(Ordering::Relaxed);
 
         #[cfg(not(feature = "parallel"))]
         return self.vector[word] as u64;
