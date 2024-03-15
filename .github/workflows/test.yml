@@ -17,8 +17,8 @@ jobs:
     strategy:
       matrix:
         rust:
-          - "1.60.0"
-          - "1.65.0"
+          - "1.66.0"
+          - "1.76.0"
     steps:
       - uses: dtolnay/rust-toolchain@master
         with:

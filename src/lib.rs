@@ -37,6 +37,8 @@ pub mod hashmap;
 #[cfg(feature = "parallel")]
 mod par_iter;
 use bitvector::BitVector;
+#[cfg(target_endian = "little")]
+use bitvector::BitVectorRef;
 
 use log::error;
 use std::borrow::Borrow;
@@ -52,21 +54,184 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
 
-#[inline]
-fn fold(v: u64) -> u32 {
-    ((v & 0xFFFFFFFF) as u32) ^ ((v >> 32) as u32)
+/// fastmod used to construct the seed as 1 << (iters + iters). However, for external hashing
+/// there's a faster path available via lookup tables if we just pass in iters. This method is
+/// to ensure that pre-existing hashes continue to work as before when not using ExternallyHashed.
+#[inline(always)]
+fn default_seed_correction(seed: u64) -> u64 {
+    1 << (seed + seed)
 }
 
-#[inline]
-fn hash_with_seed<T: Hash + ?Sized>(iter: u64, v: &T) -> u64 {
-    let mut state = wyhash::WyHash::with_seed(1 << (iter + iter));
-    v.hash(&mut state);
+fn default_hash_with_seed<T: Hash>(value: &T, seed: u64) -> u64 {
+    let mut state = wyhash::WyHash::with_seed(1 << (seed + seed));
+    value.hash(&mut state);
     state.finish()
 }
 
+// This custom trait allows us to fast-path &[u8] to avoid constructing the temporary Hasher object.
+// Can be simplified once specialization is stabilized.
+pub trait SeedableHash {
+    fn hash_with_seed(&self, seed: u64) -> u64;
+}
+
+impl SeedableHash for [u8] {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(self, default_seed_correction(seed))
+    }
+}
+
+impl<const N: usize> SeedableHash for [u8; N] {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(self, default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for u8 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&[*self], default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for i16 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for u16 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for i32 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for u32 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for i64 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for u64 {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for isize {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl SeedableHash for usize {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        wyhash::wyhash(&self.to_le_bytes(), default_seed_correction(seed))
+    }
+}
+
+impl<T: SeedableHash> SeedableHash for &T {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        (**self).hash_with_seed(seed)
+    }
+}
+
+impl<T: Hash> SeedableHash for &[T] {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        default_hash_with_seed(self, seed)
+    }
+}
+
+impl<T: Hash> SeedableHash for Vec<T> {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        default_hash_with_seed(self, seed)
+    }
+}
+
+impl SeedableHash for &str {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        default_hash_with_seed(self, seed)
+    }
+}
+
+impl SeedableHash for String {
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        default_hash_with_seed(self, seed)
+    }
+}
+
+/// This is a fast-path where the hash for an entry is known externally. That way we can skip hashing the
+/// key for building / lookups which provides savings as keys grow longer or you need to do a lookup of the
+/// same key across multiple perfect hashes. It's the user's responsibility to construct this with a value
+/// that is deterministically derived from a key.
+#[derive(Debug, Clone, Copy)]
+pub struct ExternallyHashed(pub u64);
+
+impl ExternallyHashed {
+    // Helper function for wyrng.
+    const fn wymum(a: u64, b: u64) -> u64 {
+        let mul = a as u128 * b as u128;
+        ((mul >> 64) ^ mul) as u64
+    }
+
+    // wyrng except a constified version
+    const fn wyrng(seed: u64) -> u64 {
+        const P0: u64 = 0xa076_1d64_78bd_642f;
+        const P1: u64 = 0xe703_7ed1_a0b4_28db;
+
+        let seed = seed.wrapping_add(P0);
+        Self::wymum(seed ^ P1, seed)
+    }
+
+    // Generate lookup tables to map the hash seed to a random value.
+    const fn gen_seed_lookups() -> [u64; MAX_ITERS as usize] {
+        let mut result = [0; MAX_ITERS as usize];
+        let mut i = 0;
+        while i < MAX_ITERS {
+            result[i as usize] = Self::wyrng(i);
+            i += 1;
+        }
+        result
+    }
+    const SEED_HASH_LOOKUP_TABLES: [u64; MAX_ITERS as usize] = Self::gen_seed_lookups();
+
+    // Helper utility to convert the seed passed in from hashmod (which is in 0..MAX_ITERS) into a hash.
+    fn fast_seed_hash(x: u64) -> u64 {
+        debug_assert!(x <= MAX_ITERS);
+        Self::SEED_HASH_LOOKUP_TABLES[x as usize]
+    }
+
+    // Quickly combine two hashes. Because .0 represents a hash, we know it's random and doesn't need to be
+    // independently hashed again, so we just need to combine it uniquely with iters.
+    fn hash_combine(h1: u64, h2: u64) -> u64 {
+        // https://stackoverflow.com/questions/5889238/why-is-xor-the-default-way-to-combine-hashes
+        h1 ^ (h2
+            .wrapping_add(0x517cc1b727220a95)
+            .wrapping_add(h1 << 6)
+            .wrapping_add(h1 >> 2))
+    }
+}
+
+impl SeedableHash for ExternallyHashed {
+    #[inline(always)]
+    fn hash_with_seed(&self, seed: u64) -> u64 {
+        Self::hash_combine(self.0, Self::fast_seed_hash(seed))
+    }
+}
+
 #[inline]
-fn hash_with_seed32<T: Hash + ?Sized>(iter: u64, v: &T) -> u32 {
-    fold(hash_with_seed(iter, v))
+fn fold(v: u64) -> u32 {
+    ((v & 0xFFFFFFFF) as u32) ^ ((v >> 32) as u32)
 }
 
 #[inline]
@@ -75,15 +240,139 @@ fn fastmod(hash: u32, n: u32) -> u64 {
 }
 
 #[inline]
-fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
+fn hashmod<T: SeedableHash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
     // when n < 2^32, use the fast alternative to modulo described here:
     // https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+    let h = v.hash_with_seed(iter);
     if n < (1 << 32) {
-        let h = hash_with_seed32(iter, v);
-        fastmod(h, n as u32) as u64
+        fastmod(fold(h), n as u32) as u64
     } else {
-        let h = hash_with_seed(iter, v);
-        h % (n as u64)
+        h % n
+    }
+}
+
+#[cfg(target_endian = "little")]
+pub(crate) fn u8_slice_cast<T>(s: &[u8]) -> &[T] {
+    assert_eq!(s.len() % std::mem::size_of::<T>(), 0, "Invalid length");
+    assert_eq!(
+        s.as_ptr().align_offset(std::mem::size_of::<T>()),
+        0,
+        "Misaligned - not safe"
+    );
+
+    let converted_length = s.len() / std::mem::size_of::<T>();
+    let converted: *const [u8] = s;
+    unsafe { std::slice::from_raw_parts(converted as *const T, converted_length) }
+}
+
+/// Can only be used for lookups and same interface as Mphf. This is useful if you have the serialized
+/// form stored somewhere in a raw uncompressed form and just want to reference it cheaply without copying
+/// the bulk of the underlying data. In the future it might be possible to define an efficient contiguous
+/// layout that lets us avoid even the heap allocation although it might be tricky since this is an array
+/// of tuples where each tuple itself has 2 arrays (i.e. randomly accessing the BitVectorRef is tricky
+/// without defining a fast serialized representation of an index to aide in that endeavour).
+///
+/// Note: the type parameter doesn't actually mean anything since you can
+/// launder by round-tripping through serialization (but that's true for serde as well).
+#[derive(Clone, Debug)]
+pub struct MphfRef<'a, T> {
+    bitvecs: Box<[(BitVectorRef<'a>, &'a [u64])]>,
+    phantom: PhantomData<T>,
+}
+
+impl<'a, T> MphfRef<'a, T> {
+    /// This takes an iterator of slices that compose all the parts of the original [Mphf] as returned by [Mphf::to_dma].
+    /// This requires some memory allocations to set up the internal data structures, but the underlying data itself isn't
+    /// copied at all.
+    #[cfg(target_endian = "little")]
+    pub fn from_scatter_dma(mut dma: impl ExactSizeIterator<Item = &'a [u8]>) -> Self {
+        assert_eq!(dma.len() % 3, 0);
+        let num_bitvecs = dma.len() / 3;
+        let mut bitvecs = Vec::with_capacity(num_bitvecs);
+
+        for _ in 0..num_bitvecs {
+            let bitvec = BitVectorRef::from_dma([dma.next().unwrap(), dma.next().unwrap()]);
+            let raw_ranks = dma.next().unwrap();
+            bitvecs.push((bitvec, u8_slice_cast(raw_ranks)));
+        }
+
+        assert_eq!(dma.next(), None, "Didn't properly consume DMA stream");
+
+        Self {
+            bitvecs: bitvecs.into_boxed_slice(),
+            phantom: Default::default(),
+        }
+    }
+
+    #[inline]
+    fn get_rank(&self, hash: u64, i: usize) -> u64 {
+        let idx = hash as usize;
+        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
+
+        // Last pre-computed rank
+        let mut rank = ranks[idx / 512];
+
+        // Add rank of intervening words
+        for j in (idx / 64) & !7..idx / 64 {
+            rank += bv.get_word(j).count_ones() as u64;
+        }
+
+        // Add rank of final word up to hash
+        let final_word = bv.get_word(idx / 64);
+        if idx % 64 > 0 {
+            rank += (final_word << (64 - (idx % 64))).count_ones() as u64;
+        }
+        rank
+    }
+
+    /// Compute the hash value of `item`. This method should only be used
+    /// with items known to be in construction set. Use `try_hash` if you cannot
+    /// guarantee that `item` was in the construction set. If `item` was not present
+    /// in the construction set this function may panic.
+    pub fn hash<Q>(&self, item: &Q) -> u64
+    where
+        T: Borrow<Q>,
+        Q: ?Sized + SeedableHash,
+    {
+        for i in 0..self.bitvecs.len() {
+            let (bv, _) = &self.bitvecs[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
+
+            if bv.contains(hash) {
+                return self.get_rank(hash, i);
+            }
+        }
+
+        unreachable!("must find a hash value");
+    }
+
+    /// Compute the hash value of `item`. If `item` was not present
+    /// in the set of objects used to construct the hash function, the return
+    /// value will an arbitrary value Some(x), or None.
+    pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
+    where
+        T: Borrow<Q>,
+        Q: ?Sized + SeedableHash,
+    {
+        for i in 0..self.bitvecs.len() {
+            let (bv, _) = &(self.bitvecs)[i];
+            let hash = hashmod(i as u64, item, bv.capacity());
+
+            if bv.contains(hash) {
+                return Some(self.get_rank(hash, i));
+            }
+        }
+
+        None
+    }
+}
+
+impl<'a, T> PartialEq<Mphf<T>> for MphfRef<'a, T> {
+    fn eq(&self, other: &Mphf<T>) -> bool {
+        self.bitvecs
+            .iter()
+            .zip(other.bitvecs.iter())
+            .all(|(b1, b2)| b1.0 == b2.0 && b1.1 == &*b2.1)
     }
 }
 
@@ -95,9 +384,113 @@ pub struct Mphf<T> {
     phantom: PhantomData<T>,
 }
 
+impl<T> PartialEq for Mphf<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bitvecs == other.bitvecs
+    }
+}
+
+impl<T> PartialEq<MphfRef<'_, T>> for Mphf<T> {
+    fn eq(&self, other: &MphfRef<'_, T>) -> bool {
+        self.bitvecs
+            .iter()
+            .zip(other.bitvecs.iter())
+            .all(|(b1, b2)| b1.0 == b2.0 && &*b1.1 == b2.1)
+    }
+}
+
 const MAX_ITERS: u64 = 100;
 
-impl<'a, T: 'a + Hash + Debug> Mphf<T> {
+impl<T> Mphf<T> {
+    pub fn num_dma_slices(&self) -> usize {
+        // See to_dma.
+        self.bitvecs.len() * 3
+    }
+
+    #[cfg(target_endian = "little")]
+    pub fn to_dma(&self) -> Vec<&[u8]> {
+        // Each bitvec has 3 DMA regions within it: the bits value within BitVector, the vector within BitVector and the ranks.
+        let mut scattered = Vec::with_capacity(self.bitvecs.len() * 3);
+        for (bitvec, ranks) in self.bitvecs.iter() {
+            for piece in bitvec.dma() {
+                scattered.push(piece)
+            }
+
+            let ranks = &**ranks;
+            let ranks_len = std::mem::size_of_val(ranks);
+            let ranks_ptr: *const [u64] = ranks;
+            let ranks_ptr: *const u64 = ranks_ptr as *const u64;
+            scattered
+                .push(unsafe { std::slice::from_raw_parts(ranks_ptr as *const u8, ranks_len) });
+        }
+
+        assert_eq!(scattered.len() % 3, 0);
+        scattered
+    }
+
+    #[cfg(target_endian = "little")]
+    pub fn copy_from_scatter_dma<'a>(mut dma: impl ExactSizeIterator<Item = &'a [u8]>) -> Self {
+        assert_eq!(dma.len() % 3, 0);
+        let num_bitvecs = dma.len() / 3;
+        let mut bitvecs = Vec::with_capacity(num_bitvecs);
+        for _ in 0..num_bitvecs {
+            let bitvec = BitVector::copy_from_dma([dma.next().unwrap(), dma.next().unwrap()]);
+            let ranks = u8_slice_cast::<u64>(dma.next().unwrap()).into();
+            bitvecs.push((bitvec, ranks));
+        }
+        assert_eq!(dma.next(), None, "Didn't fully consume DMA slices");
+
+        Self {
+            bitvecs: bitvecs.into_boxed_slice(),
+            phantom: Default::default(),
+        }
+    }
+
+    fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
+        let mut ranks = Vec::new();
+        let mut pop = 0_u64;
+
+        for bv in bvs {
+            let mut rank: Vec<u64> = Vec::new();
+            for i in 0..bv.num_words() {
+                let v = bv.get_word(i);
+
+                if i % 8 == 0 {
+                    rank.push(pop)
+                }
+
+                pop += v.count_ones() as u64;
+            }
+
+            ranks.push((bv, rank.into_boxed_slice()))
+        }
+
+        ranks.into_boxed_slice()
+    }
+
+    #[inline]
+    fn get_rank(&self, hash: u64, i: usize) -> u64 {
+        let idx = hash as usize;
+        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
+
+        // Last pre-computed rank
+        let mut rank = ranks[idx / 512];
+
+        // Add rank of intervening words
+        for j in (idx / 64) & !7..idx / 64 {
+            rank += bv.get_word(j).count_ones() as u64;
+        }
+
+        // Add rank of final word up to hash
+        let final_word = bv.get_word(idx / 64);
+        if idx % 64 > 0 {
+            rank += (final_word << (64 - (idx % 64))).count_ones() as u64;
+        }
+        rank
+    }
+}
+
+impl<'a, T: 'a + SeedableHash + Debug> Mphf<T> {
     /// Constructs an MPHF from a (possibly lazy) iterator over iterators.
     /// This allows construction of very large MPHFs without holding all the keys
     /// in memory simultaneously.
@@ -127,7 +520,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
         loop {
             if iter > MAX_ITERS {
                 error!("ran out of key space. items: {:?}", done_keys.len());
-                panic!("counldn't find unique hashes");
+                panic!("couldn't find unique hashes");
             }
 
             let keys_remaining = if iter == 0 {
@@ -199,7 +592,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
 
                         object_pos = object_index + 1;
 
-                        let idx = hashmod(seed, &key, size);
+                        let idx = hashmod(seed, &&key, size);
 
                         if collide.contains(idx) {
                             a.remove(idx);
@@ -226,7 +619,7 @@ impl<'a, T: 'a + Hash + Debug> Mphf<T> {
     }
 }
 
-impl<T: Hash + Debug> Mphf<T> {
+impl<T: SeedableHash + Debug> Mphf<T> {
     /// Generate a minimal perfect hash function for the set of `objects`.
     /// `objects` must not contain any duplicate items.
     /// `gamma` controls the tradeoff between the construction-time and run-time speed,
@@ -274,49 +667,6 @@ impl<T: Hash + Debug> Mphf<T> {
         }
     }
 
-    fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
-        let mut ranks = Vec::new();
-        let mut pop = 0_u64;
-
-        for bv in bvs {
-            let mut rank: Vec<u64> = Vec::new();
-            for i in 0..bv.num_words() {
-                let v = bv.get_word(i);
-
-                if i % 8 == 0 {
-                    rank.push(pop)
-                }
-
-                pop += v.count_ones() as u64;
-            }
-
-            ranks.push((bv, rank.into_boxed_slice()))
-        }
-
-        ranks.into_boxed_slice()
-    }
-
-    #[inline]
-    fn get_rank(&self, hash: u64, i: usize) -> u64 {
-        let idx = hash as usize;
-        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
-
-        // Last pre-computed rank
-        let mut rank = ranks[idx / 512];
-
-        // Add rank of intervening words
-        for j in (idx / 64) & !7..idx / 64 {
-            rank += bv.get_word(j).count_ones() as u64;
-        }
-
-        // Add rank of final word up to hash
-        let final_word = bv.get_word(idx / 64);
-        if idx % 64 > 0 {
-            rank += (final_word << (64 - (idx % 64))).count_ones() as u64;
-        }
-        rank
-    }
-
     /// Compute the hash value of `item`. This method should only be used
     /// with items known to be in construction set. Use `try_hash` if you cannot
     /// guarantee that `item` was in the construction set. If `item` was not present
@@ -324,7 +674,7 @@ impl<T: Hash + Debug> Mphf<T> {
     pub fn hash(&self, item: &T) -> u64 {
         for i in 0..self.bitvecs.len() {
             let (bv, _) = &self.bitvecs[i];
-            let hash = hashmod(i as u64, item, bv.capacity() as u64);
+            let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash) {
                 return self.get_rank(hash, i);
@@ -340,11 +690,11 @@ impl<T: Hash + Debug> Mphf<T> {
     pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
     where
         T: Borrow<Q>,
-        Q: ?Sized + Hash,
+        Q: ?Sized + SeedableHash,
     {
         for i in 0..self.bitvecs.len() {
             let (bv, _) = &(self.bitvecs)[i];
-            let hash = hashmod(i as u64, item, bv.capacity() as u64);
+            let hash = hashmod(i as u64, item, bv.capacity());
 
             if bv.contains(hash) {
                 return Some(self.get_rank(hash, i));
@@ -356,7 +706,7 @@ impl<T: Hash + Debug> Mphf<T> {
 }
 
 #[cfg(feature = "parallel")]
-impl<T: Hash + Debug + Sync + Send> Mphf<T> {
+impl<T: SeedableHash + Debug + Sync + Send> Mphf<T> {
     /// Same as `new`, but parallelizes work on the rayon default Rayon threadpool.
     /// Configure the number of threads on that threadpool to control CPU usage.
     #[cfg(feature = "parallel")]
@@ -418,7 +768,7 @@ struct Context {
 impl Context {
     fn new(size: u64, seed: u64) -> Self {
         Self {
-            size: size as u64,
+            size,
             seed,
             a: BitVector::new(size),
             collide: BitVector::new(size),
@@ -426,14 +776,14 @@ impl Context {
     }
 
     #[cfg(feature = "parallel")]
-    fn find_collisions<T: Hash>(&self, v: &T) {
+    fn find_collisions<T: SeedableHash>(&self, v: &T) {
         let idx = hashmod(self.seed, v, self.size);
         if !self.collide.contains(idx) && !self.a.insert(idx) {
             self.collide.insert(idx);
         }
     }
 
-    fn find_collisions_sync<T: Hash>(&mut self, v: &T) {
+    fn find_collisions_sync<T: SeedableHash>(&mut self, v: &T) {
         let idx = hashmod(self.seed, v, self.size);
         if !self.collide.contains(idx) && !self.a.insert_sync(idx) {
             self.collide.insert_sync(idx);
@@ -441,7 +791,7 @@ impl Context {
     }
 
     #[cfg(feature = "parallel")]
-    fn filter<'t, T: Hash>(&self, v: &'t T) -> Option<&'t T> {
+    fn filter<'t, T: SeedableHash>(&self, v: &'t T) -> Option<&'t T> {
         let idx = hashmod(self.seed, v, self.size);
         if self.collide.contains(idx) {
             self.a.remove(idx);
@@ -452,7 +802,7 @@ impl Context {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn filter<'t, T: Hash>(&mut self, v: &'t T) -> Option<&'t T> {
+    fn filter<'t, T: SeedableHash>(&mut self, v: &'t T) -> Option<&'t T> {
         let idx = hashmod(self.seed, v, self.size);
         if self.collide.contains(idx) {
             self.a.remove(idx);
@@ -533,7 +883,10 @@ where
 }
 
 #[cfg(feature = "parallel")]
-impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
+impl<'a, T: 'a + SeedableHash + Debug + Send + Sync> Mphf<T>
+where
+    &'a T: SeedableHash,
+{
     /// Same as to `from_chunked_iterator` but parallelizes work over `num_threads` threads.
     #[cfg(feature = "parallel")]
     pub fn from_chunked_iterator_parallel<I, N>(
@@ -569,7 +922,7 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
         loop {
             if max_iters.is_some() && iter > max_iters.unwrap() {
                 error!("ran out of key space. items: {:?}", global.done_keys.len());
-                panic!("counldn't find unique hashes");
+                panic!("couldn't find unique hashes");
             }
 
             let keys_remaining = if iter == 0 {
@@ -701,7 +1054,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf<T>(xs: HashSet<T>) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Debug + Send,
+        T: Sync + SeedableHash + PartialEq + Eq + Debug + Send,
     {
         let xsv: Vec<T> = xs.into_iter().collect();
 
@@ -712,7 +1065,7 @@ mod tests {
     /// Check that a Minimal perfect hash function (MPHF) is generated for the set xs
     fn check_mphf_serial<T>(xsv: &[T]) -> bool
     where
-        T: Hash + PartialEq + Eq + Debug,
+        T: SeedableHash + PartialEq + Eq + Debug,
     {
         // Generate the MPHF
         let phf = Mphf::new(1.7, xsv);
@@ -731,7 +1084,7 @@ mod tests {
     #[cfg(feature = "parallel")]
     fn check_mphf_parallel<T>(xsv: &[T]) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Debug + Send,
+        T: Sync + SeedableHash + PartialEq + Eq + Debug + Send,
     {
         // Generate the MPHF
         let phf = Mphf::new_parallel(1.7, xsv, None);
@@ -749,14 +1102,14 @@ mod tests {
     #[cfg(not(feature = "parallel"))]
     fn check_mphf_parallel<T>(_xsv: &[T]) -> bool
     where
-        T: Hash + PartialEq + Eq + Debug,
+        T: SeedableHash + PartialEq + Eq + Debug,
     {
         true
     }
 
     fn check_chunked_mphf<T>(values: Vec<Vec<T>>, total: u64) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Debug + Send,
+        T: Sync + SeedableHash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator(1.7, &values, total);
 
@@ -776,7 +1129,7 @@ mod tests {
     #[cfg(feature = "parallel")]
     fn check_chunked_mphf_parallel<T>(values: Vec<Vec<T>>, total: u64) -> bool
     where
-        T: Sync + Hash + PartialEq + Eq + Debug + Send,
+        T: Sync + SeedableHash + PartialEq + Eq + Debug + Send,
     {
         let phf = Mphf::from_chunked_iterator_parallel(1.7, &values, None, total, 2);
 
@@ -882,5 +1235,56 @@ mod tests {
     fn from_ints_serial() {
         let items = (0..1000000).map(|x| x * 2);
         assert!(check_mphf(HashSet::from_iter(items)));
+    }
+
+    #[test]
+    fn externally_hashed() {
+        let total = 1000000;
+        // User gets to pick the hash function.
+        let entries = (0..total)
+            .map(|x| ExternallyHashed(wyhash::wyrng(&mut (x * 2))))
+            .collect::<Vec<ExternallyHashed>>();
+        let phf = Mphf::new(1.7, &entries);
+
+        let mut hashes = entries.iter().map(|eh| phf.hash(eh)).collect::<Vec<u64>>();
+        hashes.sort_unstable();
+
+        let gt = (0..total as u64).collect::<Vec<u64>>();
+        assert_eq!(hashes, gt);
+
+        // Hand-picked a value that fails to hash since it's not in the original set that it's built from.
+        // It's not ideal that this assertion is sensitive to the implementation details internal to Mphf.
+        assert_eq!(
+            phf.try_hash(&ExternallyHashed(wyhash::wyrng(&mut 1000129))),
+            None
+        );
+    }
+
+    #[test]
+    fn dma_serde() {
+        // User gets to pick the hash function.
+        let items = (0..1000000).map(|x| x * 2).collect::<Vec<_>>();
+        let phf = Mphf::new(1.7, &items);
+
+        let serialized = phf.to_dma();
+
+        let phf2 = Mphf::<i32>::copy_from_scatter_dma(serialized.iter().copied());
+        let phf3 = MphfRef::<i32>::from_scatter_dma(serialized.iter().copied());
+
+        assert_eq!(phf, phf2);
+        assert_eq!(phf2, phf);
+
+        assert_eq!(phf, phf3);
+        assert_eq!(phf3, phf);
+
+        for i in items {
+            assert_eq!(phf.try_hash(&i), phf2.try_hash(&i));
+            assert_eq!(phf.try_hash(&i), phf3.try_hash(&i));
+        }
+
+        for i in 1000000..1000000 * 2 {
+            assert_eq!(phf.try_hash(&i), phf2.try_hash(&i));
+            assert_eq!(phf.try_hash(&i), phf3.try_hash(&i));
+        }
     }
 }
