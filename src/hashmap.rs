@@ -39,7 +39,8 @@ where
         BoomHashMap { mphf, keys, values }
     }
 
-    /// Create a new hash map from the parallel array `keys` and `values`
+    /// Create a new hash map from the parallel array `keys` and `values`.
+    /// `keys` must not contain any duplicate items
     pub fn new(keys: Vec<K>, data: Vec<D>) -> BoomHashMap<K, D> {
         let mphf = Mphf::new(1.7, &keys);
         Self::create_map(keys, data, mphf)
