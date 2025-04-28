@@ -3,6 +3,9 @@
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
 
+#[cfg(feature = "deepsize")]
+use deepsize::DeepSizeOf;
+
 use crate::Mphf;
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -128,6 +131,19 @@ where
             hash: self,
             index: 0,
         }
+    }
+}
+
+#[cfg(feature = "deepsize")]
+impl<K, D> DeepSizeOf for BoomHashMap<K, D>
+where
+    K: Hash + Debug + PartialEq + DeepSizeOf,
+    D: Debug + DeepSizeOf,
+{
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.mphf.deep_size_of_children(context)
+            + self.keys.deep_size_of_children(context)
+            + self.values.deep_size_of_children(context)
     }
 }
 

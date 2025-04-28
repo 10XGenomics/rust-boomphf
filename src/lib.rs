@@ -51,6 +51,8 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
+#[cfg(feature = "deepsize")]
+use deepsize::DeepSizeOf;
 
 #[inline]
 fn fold(v: u64) -> u32 {
@@ -405,6 +407,13 @@ impl<T: Hash + Debug + Sync + Send> Mphf<T> {
             bitvecs: Self::compute_ranks(bitvecs),
             phantom: PhantomData,
         }
+    }
+}
+
+#[cfg(feature = "deepsize")]
+impl<T> DeepSizeOf for Mphf<T> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.bitvecs.deep_size_of_children(context) + self.phantom.deep_size_of_children(context)
     }
 }
 

@@ -30,6 +30,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
+#[cfg(feature = "deepsize")]
+use deepsize::DeepSizeOf;
 
 #[cfg(feature = "parallel")]
 type Word = AtomicU64;
@@ -381,6 +383,13 @@ impl BitVector {
             idx: 0,
             size: self.bits,
         }
+    }
+}
+
+#[cfg(feature = "deepsize")]
+impl DeepSizeOf for BitVector {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.bits.deep_size_of_children(context) + self.vector.deep_size_of_children(context)
     }
 }
 
