@@ -3,17 +3,16 @@
 #[cfg(feature = "serde")]
 use serde::{self, Deserialize, Serialize};
 
-use crate::Mphf;
+use crate::{Mphf, SeedableHash};
 use std::borrow::Borrow;
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::iter::ExactSizeIterator;
 
 /// A HashMap data structure where the mapping between keys and values is encoded in a Mphf. This lets us store the keys and values in dense
 /// arrays, with ~3 bits/item overhead in the Mphf.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BoomHashMap<K: Hash, D> {
+pub struct BoomHashMap<K: SeedableHash, D> {
     mphf: Mphf<K>,
     pub(crate) keys: Vec<K>,
     pub(crate) values: Vec<D>,
@@ -21,7 +20,7 @@ pub struct BoomHashMap<K: Hash, D> {
 
 impl<K, D> BoomHashMap<K, D>
 where
-    K: Hash + Debug + PartialEq,
+    K: SeedableHash + Debug + PartialEq,
     D: Debug,
 {
     fn create_map(mut keys: Vec<K>, mut values: Vec<D>, mphf: Mphf<K>) -> BoomHashMap<K, D> {
@@ -49,7 +48,7 @@ where
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -69,7 +68,7 @@ where
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -89,7 +88,7 @@ where
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -133,7 +132,7 @@ where
 
 impl<K, D> core::iter::FromIterator<(K, D)> for BoomHashMap<K, D>
 where
-    K: Hash + Debug + PartialEq,
+    K: SeedableHash + Debug + PartialEq,
     D: Debug,
 {
     fn from_iter<I: IntoIterator<Item = (K, D)>>(iter: I) -> Self {
@@ -149,21 +148,21 @@ where
 }
 
 #[cfg(feature = "parallel")]
-pub trait ConstructibleKey: Hash + Debug + PartialEq + Send + Sync {}
+pub trait ConstructibleKey: SeedableHash + Debug + PartialEq + Send + Sync {}
 
 #[cfg(feature = "parallel")]
-impl<T> ConstructibleKey for T where T: Hash + Debug + PartialEq + Send + Sync {}
+impl<T> ConstructibleKey for T where T: SeedableHash + Debug + PartialEq + Send + Sync {}
 
 #[cfg(not(feature = "parallel"))]
-pub trait ConstructibleKey: Hash + Debug + PartialEq {}
+pub trait ConstructibleKey: SeedableHash + Debug + PartialEq {}
 
 #[cfg(not(feature = "parallel"))]
-impl<T> ConstructibleKey for T where T: Hash + Debug + PartialEq {}
+impl<T> ConstructibleKey for T where T: SeedableHash + Debug + PartialEq {}
 
 #[cfg(feature = "parallel")]
 impl<K, D> BoomHashMap<K, D>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: SeedableHash + Debug + PartialEq + Send + Sync,
     D: Debug,
 {
     /// Create a new hash map from the parallel array `keys` and `values`, using a parallelized method to construct the Mphf.
@@ -174,12 +173,12 @@ where
 }
 
 /// Iterate over key-value pairs in a BoomHashMap
-pub struct BoomIterator<'a, K: Hash + 'a, D: 'a> {
+pub struct BoomIterator<'a, K: SeedableHash + 'a, D: 'a> {
     hash: &'a BoomHashMap<K, D>,
     index: usize,
 }
 
-impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
+impl<'a, K: SeedableHash, D> Iterator for BoomIterator<'a, K, D> {
     type Item = (&'a K, &'a D);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -199,9 +198,9 @@ impl<'a, K: Hash, D> Iterator for BoomIterator<'a, K, D> {
     }
 }
 
-impl<'a, K: Hash, D1> ExactSizeIterator for BoomIterator<'a, K, D1> {}
+impl<'a, K: SeedableHash, D1> ExactSizeIterator for BoomIterator<'a, K, D1> {}
 
-impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
+impl<'a, K: SeedableHash, D> IntoIterator for &'a BoomHashMap<K, D> {
     type Item = (&'a K, &'a D);
     type IntoIter = BoomIterator<'a, K, D>;
 
@@ -219,19 +218,19 @@ impl<'a, K: Hash, D> IntoIterator for &'a BoomHashMap<K, D> {
 /// arrays, with ~3 bits/item overhead in the Mphf.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BoomHashMap2<K: Hash, D1, D2> {
+pub struct BoomHashMap2<K: SeedableHash, D1, D2> {
     mphf: Mphf<K>,
     keys: Vec<K>,
     values: Vec<D1>,
     aux_values: Vec<D2>,
 }
 
-pub struct Boom2Iterator<'a, K: Hash + 'a, D1: 'a, D2: 'a> {
+pub struct Boom2Iterator<'a, K: SeedableHash + 'a, D1: 'a, D2: 'a> {
     hash: &'a BoomHashMap2<K, D1, D2>,
     index: usize,
 }
 
-impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
+impl<'a, K: SeedableHash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
     type Item = (&'a K, &'a D1, &'a D2);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -254,9 +253,9 @@ impl<'a, K: Hash, D1, D2> Iterator for Boom2Iterator<'a, K, D1, D2> {
     }
 }
 
-impl<'a, K: Hash, D1, D2> ExactSizeIterator for Boom2Iterator<'a, K, D1, D2> {}
+impl<'a, K: SeedableHash, D1, D2> ExactSizeIterator for Boom2Iterator<'a, K, D1, D2> {}
 
-impl<'a, K: Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
+impl<'a, K: SeedableHash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
     type Item = (&'a K, &'a D1, &'a D2);
     type IntoIter = Boom2Iterator<'a, K, D1, D2>;
 
@@ -270,7 +269,7 @@ impl<'a, K: Hash, D1, D2> IntoIterator for &'a BoomHashMap2<K, D1, D2> {
 
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
-    K: Hash + Debug + PartialEq,
+    K: SeedableHash + Debug + PartialEq,
     D1: Debug,
     D2: Debug,
 {
@@ -310,7 +309,7 @@ where
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -329,7 +328,7 @@ where
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -351,7 +350,7 @@ where
     pub fn get_key_id<Q: ?Sized>(&self, kmer: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -395,7 +394,7 @@ where
 
 impl<K, D1, D2> core::iter::FromIterator<(K, D1, D2)> for BoomHashMap2<K, D1, D2>
 where
-    K: Hash + Debug + PartialEq,
+    K: SeedableHash + Debug + PartialEq,
     D1: Debug,
     D2: Debug,
 {
@@ -416,7 +415,7 @@ where
 #[cfg(feature = "parallel")]
 impl<K, D1, D2> BoomHashMap2<K, D1, D2>
 where
-    K: Hash + Debug + PartialEq + Send + Sync,
+    K: SeedableHash + Debug + PartialEq + Send + Sync,
     D1: Debug,
     D2: Debug,
 {
@@ -500,7 +499,7 @@ where
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<&D1>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -513,7 +512,7 @@ where
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<&mut D1>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         match maybe_pos {
@@ -619,7 +618,7 @@ where
     pub fn get<Q: ?Sized>(&self, kmer: &Q) -> Option<(&D1, &D2)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         maybe_pos.map(|pos| (&self.values[pos as usize], &self.aux_values[pos as usize]))
@@ -629,7 +628,7 @@ where
     pub fn get_mut<Q: ?Sized>(&mut self, kmer: &Q) -> Option<(&mut D1, &mut D2)>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: SeedableHash + Eq,
     {
         let maybe_pos = self.mphf.try_hash(kmer);
         maybe_pos.map(|pos| {

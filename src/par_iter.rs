@@ -1,12 +1,11 @@
-use std::hash::Hash;
-
 use crate::hashmap::BoomHashMap;
+use crate::SeedableHash;
 use rayon::iter::plumbing::{bridge, Consumer, Producer, ProducerCallback, UnindexedConsumer};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
 impl<'data, K, V> IntoParallelIterator for &'data BoomHashMap<K, V>
 where
-    K: Hash + Sync + 'data,
+    K: SeedableHash + Sync + 'data,
     V: Sync + 'data,
 {
     type Item = (&'data K, &'data V);

@@ -30,3 +30,7 @@ harness = false
 [features]
 default = ["parallel"]
 parallel = ["rayon", "crossbeam-utils"]
+
+[profile.release]
+lto = true
+debug = 2
