@@ -12,7 +12,7 @@ Example usage:
  ```rust
  use boomphf::*;
 
- // sample set of obejcts
+ // sample set of objects
  let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
  let n = possible_objects.len();
 
